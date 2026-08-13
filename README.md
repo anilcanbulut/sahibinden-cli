@@ -42,8 +42,8 @@ sahibinden-cli search --brand Volkswagen --model Passat --min-year 2019 --max-pr
 # Market summary from everything stored — no network, no budget cost
 sahibinden-cli price --brand Volkswagen --model Passat
 
-# Damage records for the cheapest candidates (1 request each)
-sahibinden-cli details --limit 5
+# Damage records — aim them, one request each
+sahibinden-cli details --brand Volkswagen --model Passat --min-year 2018 --max-km 200000
 
 # Everything known about one car
 sahibinden-cli listing 1331795270
@@ -112,7 +112,7 @@ sahibinden-cli config --set default_pages=10
 |---|---|---|
 | `search` | yes | resolve brand/model/city → URL, sweep, store |
 | `details` | yes | damage records; one request per listing |
-| `nightly` | yes | refresh every tracked search, then spend detail budget |
+| `nightly` | yes | refresh tracked searches (oldest first, capped), then spend detail budget |
 | `price` | no | price percentiles, damage split, turnover |
 | `listing` | no | full record: row, price history, damage, description |
 | `history` | no | price trail for one listing |
@@ -201,6 +201,17 @@ $env:SAHIBINDEN_DAILY_BUDGET=20                  # this shell
 ```
 
 Precedence: defaults → `data/config.json` → `SAHIBINDEN_*` → CLI flags.
+
+## Aim the detail budget
+
+`details` queues cheapest-first *within the scope you give it*. Unscoped that
+backfires: one broad `--max-price 900000` sweep drags in the bottom of the
+market, and a full day's budget went on 1980s cars with broken gearboxes.
+
+```powershell
+sahibinden-cli details --brand Volkswagen --model Passat --min-year 2018 --max-km 200000
+sahibinden-cli details --listing-id 1331795270
+```
 
 ## Scheduled refresh
 

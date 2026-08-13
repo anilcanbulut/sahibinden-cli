@@ -109,8 +109,8 @@ def fetch_details(
     listing_ids: list[str] | None = None,
     *,
     limit: int | None = None,
-    max_price: int | None = None,
     db_path: str | None = None,
+    **scope,
 ) -> dict:
     """Fetch detail pages — the expensive tier — and store what they hold.
 
@@ -144,7 +144,7 @@ def fetch_details(
             ]
             missing = set(listing_ids) - {r["listing_id"] for r in rows}
         else:
-            rows = [dict(r) for r in store.needs_detail(cap, max_price=max_price)]
+            rows = [dict(r) for r in store.needs_detail(cap, **scope)]
             missing = set()
 
         targets = [r for r in rows if r.get("url")][:cap]

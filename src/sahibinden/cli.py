@@ -275,8 +275,10 @@ def cmd_config(args) -> int:
 
 def cmd_details(args) -> int:
     """Fetch detail pages (damage records) for queued or named listings."""
+    scope = {k: getattr(args, k, None) for k in
+             ("max_price", "min_price", "brand", "model", "min_year", "max_km")}
     result = fetch_details(args.listing_id or None, limit=args.limit,
-                           max_price=args.max_price)
+                           **{k: v for k, v in scope.items() if v is not None})
     if result.get("error"):
         print(f"refused: {result['error']}", file=sys.stderr)
         return EXIT_REFUSED
@@ -485,17 +487,28 @@ def cmd_nightly(args) -> int:
     absence.
     """
     with Store(config.db_path) as store:
-        searches = [r["base_url"] for r in store.db.execute(
+        # Oldest-swept first, so a capped run rotates through everything over
+        # successive nights instead of always refreshing the same few.
+        # Without a cap this job grows without bound: every ad-hoc `search`
+        # adds a search to it permanently, and at 5 pages each, thirty of them
+        # would want 150 requests a night.
+        rows = store.db.execute(
             "SELECT base_url, MAX(started_at) AS last FROM sweep_runs"
             " GROUP BY base_url ORDER BY last"
-        ).fetchall()]
+        ).fetchall()
+        if args.only:
+            needle = args.only.lower()
+            rows = [r for r in rows if needle in r["base_url"].lower()]
+        tracked_total = len(rows)
+        searches = [r["base_url"] for r in rows][:args.max_searches]
 
     if not searches:
         print("nothing tracked yet — run a search first", file=sys.stderr)
         return EXIT_ERROR
 
     breaker = Breaker(BREAKER_PATH)
-    report = {"started_budget": breaker.remaining, "searches": [], "details": None}
+    report = {"started_budget": breaker.remaining, "tracked_total": tracked_total,
+              "selected": len(searches), "searches": [], "details": None}
 
     for url in searches:
         if Breaker(BREAKER_PATH).remaining <= config.detail_budget:
@@ -526,6 +539,9 @@ def cmd_nightly(args) -> int:
 
     def human(d):
         print(f"  budget {d['started_budget']} -> {d['ending_budget']}")
+        if d["selected"] < d["tracked_total"]:
+            print(f"  refreshing {d['selected']} of {d['tracked_total']} tracked "
+                  f"searches (oldest first; the rest rotate in on later runs)")
         for s in d["searches"]:
             if s.get("skipped") or s.get("error"):
                 print(f"  - {s.get('skipped') or s['error']}: {s['url'][:60]}")
@@ -816,6 +832,11 @@ def build_parser() -> argparse.ArgumentParser:
                    help="specific listing id, repeatable (default: work the queue)")
     p.add_argument("--limit", type=int, help="max listings (capped by detail_budget)")
     p.add_argument("--max-price", type=int, help="only queue listings at or below this")
+    p.add_argument("--min-price", type=int, help="only queue listings at or above this")
+    p.add_argument("--brand", help="only this brand")
+    p.add_argument("--model", help="only this model")
+    p.add_argument("--min-year", type=int, help="only cars this year or newer")
+    p.add_argument("--max-km", type=int, help="only cars at or below this km")
     p.set_defaults(func=cmd_details)
 
     p = sub.add_parser("listing", parents=[shared],
@@ -856,6 +877,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="pages per search (default: config default_pages)")
     p.add_argument("--no-details", action="store_true",
                    help="sweeps only, skip detail fetching")
+    p.add_argument("--max-searches", type=int, default=4,
+                   help="how many tracked searches to refresh, oldest first")
+    p.add_argument("--only", help="only searches whose URL contains this text")
     p.set_defaults(func=cmd_nightly)
 
     p = sub.add_parser("sql", parents=[shared],

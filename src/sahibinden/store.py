@@ -458,19 +458,34 @@ class Store:
             " WHERE listing_id=? ORDER BY observed_at", (listing_id,),
         ).fetchall()
 
-    def needs_detail(self, limit: int, *, max_price: int | None = None) -> list[sqlite3.Row]:
+    def needs_detail(self, limit: int, *, max_price: int | None = None,
+                     min_price: int | None = None, brand: str | None = None,
+                     model: str | None = None, min_year: int | None = None,
+                     max_km: int | None = None) -> list[sqlite3.Row]:
         """Active listings with no detail record yet — the detail-fetch queue.
 
-        Ordered cheapest-first so a small daily budget lands on the candidates
-        most likely to be worth looking at.
+        Cheapest-first *within the given scope*. Unscoped, cheapest-first is
+        actively wrong once the database holds anything from a broad sweep: an
+        unfiltered market query drags in the bottom of it, and a whole day's
+        detail budget went on 1980s cars with broken gearboxes. The filters
+        exist so the budget can be aimed at cars actually under consideration.
         """
-        sql = ("SELECT l.listing_id, l.url, l.last_price_try FROM listings l"
+        sql = ("SELECT l.listing_id, l.url, l.last_price_try, l.brand, l.model,"
+               " l.year, l.km FROM listings l"
                " LEFT JOIN listing_details d ON d.listing_id = l.listing_id"
                " WHERE d.listing_id IS NULL AND l.delisted_at IS NULL AND l.url IS NOT NULL")
         params: list = []
-        if max_price:
-            sql += " AND l.last_price_try <= ?"
-            params.append(max_price)
+        for clause, value in (
+            (" AND l.last_price_try <= ?", max_price),
+            (" AND l.last_price_try >= ?", min_price),
+            (" AND LOWER(l.brand) = LOWER(?)", brand),
+            (" AND LOWER(l.model) = LOWER(?)", model),
+            (" AND l.year >= ?", min_year),
+            (" AND l.km <= ?", max_km),
+        ):
+            if value is not None:
+                sql += clause
+                params.append(value)
         sql += " ORDER BY l.last_price_try ASC LIMIT ?"
         params.append(limit)
         return self.db.execute(sql, params).fetchall()
