@@ -49,6 +49,46 @@ def slugify(value: str) -> str:
     return text.strip("-")
 
 
+#: Abbreviations people actually type that are not prefixes of the real name,
+#: so neither prefix nor fuzzy matching would ever reach them.
+BRAND_ALIASES = {
+    "vw": "Volkswagen",
+    "mb": "Mercedes-Benz",
+    "merco": "Mercedes-Benz",
+    "range rover": "Land Rover",
+}
+
+
+def _resolve(value: str, slugs: dict[str, str], aliases: dict[str, str],
+             cutoff: float) -> tuple[str | None, list[str]]:
+    """Resolve a user string against known names.
+
+    Tried in order of confidence: alias, exact slug, unique prefix, then fuzzy.
+    A prefix only wins when exactly one name matches — 'a' must not silently
+    pick whichever brand happens to sort first. When a prefix is ambiguous the
+    candidates come back so the caller can ask which one was meant, rather than
+    guessing and returning a market summary for the wrong car.
+    """
+    raw = value.strip().lower()
+    if raw in aliases:
+        return aliases[raw], []
+
+    slug = slugify(value)
+    if not slug:
+        return None, []
+    if slug in slugs:
+        return slugs[slug], []
+
+    prefixed = sorted(name for key, name in slugs.items() if key.startswith(slug))
+    if len(prefixed) == 1:
+        return prefixed[0], []
+    if len(prefixed) > 1:
+        return None, prefixed
+
+    near = get_close_matches(slug, list(slugs), n=1, cutoff=cutoff)
+    return (slugs[near[0]] if near else None), []
+
+
 class Taxonomy:
     def __init__(self, path: Path | str = TAXONOMY_PATH) -> None:
         self.path = Path(path)
@@ -129,20 +169,14 @@ class Taxonomy:
 
     # ------------------------------------------------------------ resolving
 
-    def match_brand(self, value: str) -> str | None:
-        """Exact slug match, else nearest known brand — 'wolkswagen' still lands."""
-        slug = slugify(value)
-        if slug in self._brand_slugs:
-            return self._brand_slugs[slug]
-        near = get_close_matches(slug, list(self._brand_slugs), n=1, cutoff=0.75)
-        return self._brand_slugs[near[0]] if near else None
+    def match_brand(self, value: str, *, detail: bool = False):
+        """Resolve to a known brand. See _resolve for the matching order."""
+        name, ambiguous = _resolve(value, self._brand_slugs, BRAND_ALIASES, 0.75)
+        return (name, ambiguous) if detail else name
 
-    def match_city(self, value: str) -> str | None:
-        slug = slugify(value)
-        if slug in self._city_slugs:
-            return self._city_slugs[slug]
-        near = get_close_matches(slug, list(self._city_slugs), n=1, cutoff=0.8)
-        return self._city_slugs[near[0]] if near else None
+    def match_city(self, value: str, *, detail: bool = False):
+        name, ambiguous = _resolve(value, self._city_slugs, {}, 0.8)
+        return (name, ambiguous) if detail else name
 
     def build_url(
         self,
@@ -159,13 +193,15 @@ class Taxonomy:
         sort: str = "price_asc",
     ) -> dict:
         """Compose a search URL, reporting what matched and what was guessed."""
-        known_brand = self.match_brand(brand)
+        known_brand, ambiguous = self.match_brand(brand, detail=True)
         if known_brand is None:
             return {
-                "error": f"unknown brand {brand!r}",
-                "did_you_mean": get_close_matches(
-                    slugify(brand), list(self._brand_slugs), n=5, cutoff=0.4
-                ),
+                "error": (f"{brand!r} matches {len(ambiguous)} brands"
+                          if ambiguous else f"unknown brand {brand!r}"),
+                "did_you_mean": ambiguous or [
+                    self._brand_slugs[s] for s in get_close_matches(
+                        slugify(brand), list(self._brand_slugs), n=5, cutoff=0.4)
+                ],
             }
 
         path = slugify(known_brand)
@@ -174,11 +210,13 @@ class Taxonomy:
 
         known_city = None
         if city:
-            known_city = self.match_city(city)
+            known_city, ambiguous_city = self.match_city(city, detail=True)
             if known_city is None:
-                return {"error": f"unknown city {city!r}",
-                        "did_you_mean": get_close_matches(
-                            slugify(city), list(self._city_slugs), n=5, cutoff=0.4)}
+                return {"error": (f"{city!r} matches {len(ambiguous_city)} cities"
+                                  if ambiguous_city else f"unknown city {city!r}"),
+                        "did_you_mean": ambiguous_city or [
+                            self._city_slugs[s] for s in get_close_matches(
+                                slugify(city), list(self._city_slugs), n=5, cutoff=0.4)]}
             path += "/" + slugify(known_city)
 
         # Range parameters come from the filter map harvested out of

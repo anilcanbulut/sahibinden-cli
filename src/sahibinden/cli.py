@@ -353,11 +353,35 @@ def cmd_reparse(args) -> int:
 
 def cmd_price(args) -> int:
     """Answer a market question from stored data. No network, no budget cost."""
+    # Resolve through the same matcher `search` uses. Without this, `search
+    # --brand merc` would work while `price --brand merc` silently returned
+    # nothing, since the stored value is the canonical "Mercedes-Benz".
+    tax = Taxonomy()
+    brand = args.brand
+    if brand:
+        resolved, ambiguous = tax.match_brand(brand, detail=True)
+        if resolved is None:
+            print(f"error: {'ambiguous' if ambiguous else 'unknown'} brand {brand!r}"
+                  + (f" — did you mean: {', '.join(ambiguous[:6])}" if ambiguous else ""),
+                  file=sys.stderr)
+            return EXIT_ERROR
+        brand = resolved
+
+    city = args.city
+    if city:
+        resolved_city, ambiguous_city = tax.match_city(city, detail=True)
+        if resolved_city is None:
+            print(f"error: {'ambiguous' if ambiguous_city else 'unknown'} city {city!r}"
+                  + (f" — did you mean: {', '.join(ambiguous_city[:6])}" if ambiguous_city else ""),
+                  file=sys.stderr)
+            return EXIT_ERROR
+        city = resolved_city
+
     with Store(config.db_path) as store:
         data = store.market(
-            brand=args.brand, model=args.model,
+            brand=brand, model=args.model,
             min_year=args.min_year, max_year=args.max_year, max_km=args.max_km,
-            city=args.city, exclude_damaged=args.clean_only,
+            city=city, exclude_damaged=args.clean_only,
             include_delisted=args.include_delisted,
         )
     data["query"] = {k: v for k, v in vars(args).items()

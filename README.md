@@ -109,6 +109,27 @@ sqlite itself rather than by pattern-matching the query text.
 | `sweep_runs` | every crawl: url, pages fetched, whether it was complete |
 | `sweep_appearances` | which listings appeared in which sweep (drives delisting) |
 
+## Input matching
+
+Brand and city arguments are forgiving. Matching is tried in order of
+confidence: alias, exact, unique prefix, then fuzzy.
+
+| You type | Resolves to | Why |
+|---|---|---|
+| `VOLKSWAGEN`, `vOlKsWaGeN` | Volkswagen | case-insensitive |
+| `volks`, `merc`, `ist` | Volkswagen, Mercedes-Benz, İstanbul | unique prefix |
+| `vw`, `mb` | Volkswagen, Mercedes-Benz | alias |
+| `wolkswagen`, `renaut`, `toyata` | Volkswagen, Renault, Toyota | typo tolerance |
+| `sanliurfa`, `Škoda` | Şanlıurfa, Skoda | Turkish characters folded |
+| `b` | *error* — ambiguous: BMW, BYD | a prefix must be unique |
+
+An ambiguous prefix is an error listing the candidates, never a silent pick —
+guessing would return a confident market summary for the wrong car.
+
+`--model` is not validated (sahibinden loads model lists per brand over XHR), so
+it is slugified and passed through. `total_results` tells you whether it matched;
+`search` reports `NO RESULTS — check spelling` when it did not.
+
 ## Rate limiting
 
 Bans on this site are rate-triggered, IP-wide, and lift on their own after about
