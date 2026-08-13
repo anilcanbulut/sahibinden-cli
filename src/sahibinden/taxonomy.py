@@ -24,6 +24,7 @@ import re
 import unicodedata
 from difflib import get_close_matches
 from pathlib import Path
+from urllib.parse import parse_qsl, urlencode, urlparse
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 TAXONOMY_PATH = PROJECT_ROOT / "data" / "taxonomy.json"
@@ -89,18 +90,56 @@ def _resolve(value: str, slugs: dict[str, str], aliases: dict[str, str],
     return (slugs[near[0]] if near else None), []
 
 
+#: CLI flag -> the group name sahibinden uses. Mapped by *name*, not by
+#: attribute id: the ids are category-specific, so keying on them would break
+#: the moment the tool is pointed at anything but cars.
+ENUM_FLAGS = {
+    "fuel": "Yakıt / Motor Tipi",
+    "transmission": "Vites",
+    "condition": "Araç Durumu",
+    "body": "Kasa Tipi",
+    "power": "Motor Gücü",
+    "engine": "Motor Hacmi",
+    "drive": "Çekiş",
+    "color": "Renk",
+    "warranty": "Garanti",
+    "heavy_damage": "Ağır Hasar Kayıtlı",
+    "plate": "Plaka / Uyruk",
+    "seller": "Kimden",
+    "tradeable": "Takaslı",
+    "listed_within": "İlan Tarihi",
+}
+
+#: English input people will reach for, mapped onto sahibinden's own labels.
+ENUM_SYNONYMS = {
+    "gasoline": "Benzin", "petrol": "Benzin", "diesel": "Dizel",
+    "motorin": "Dizel", "hybrid": "Benzin (Hibrit)", "electric": "Elektrik",
+    "automatic": "Otomatik", "manual": "Manuel",
+    "yes": "Evet", "no": "Hayır", "true": "Evet", "false": "Hayır",
+    "second hand": "İkinci El", "used": "İkinci El", "new": "Sıfır",
+    "imported": "Yurtdışından İthal Sıfır",
+    "white": "Beyaz", "black": "Siyah", "grey": "Gri", "gray": "Gri",
+    "red": "Kırmızı", "blue": "Mavi", "silver": "Gümüş Gri",
+    "owner": "Sahibinden", "dealer": "Galeriden", "authorised": "Yetkili Bayiden",
+    "fwd": "Önden Çekiş", "rwd": "Arkadan İtiş",
+}
+
+
 class Taxonomy:
     def __init__(self, path: Path | str = TAXONOMY_PATH) -> None:
         self.path = Path(path)
         data = (
             json.loads(self.path.read_text(encoding="utf-8"))
-            if self.path.exists() else {"brands": {}, "cities": {}, "filters": {}}
+            if self.path.exists() else {"brands": {}, "cities": {}, "filters": {}, "enums": {}}
         )
         self.brands: dict[str, str] = data.get("brands", {})
         self.cities: dict[str, str] = data.get("cities", {})
         #: Range filters discovered from sahibinden's own search form, keyed by
         #: its Turkish label ("Yıl", "KM", "Fiyat").
         self.filters: dict[str, dict] = data.get("filters", {})
+        #: Enumerated filters harvested from the site's facet links,
+        #: keyed by its own Turkish group name ("Yakıt / Motor Tipi").
+        self.enums: dict[str, dict] = data.get("enums", {})
         self._brand_slugs = {slugify(name): name for name in self.brands}
         self._city_slugs = {slugify(name): name for name in self.cities}
 
@@ -120,8 +159,10 @@ class Taxonomy:
         """
         from bs4 import BeautifulSoup
 
+        from .parse.util import text  # noqa: F401  (local import keeps deps lazy)
+
         soup = BeautifulSoup(html, "lxml")
-        found: dict[str, dict] = {"brands": {}, "cities": {}, "filters": {}}
+        found: dict[str, dict] = {"brands": {}, "cities": {}, "filters": {}, "enums": {}}
 
         for select in soup.select("select"):
             key = {"brand": "brands", "city": "cities"}.get(select.get("name") or "")
@@ -132,6 +173,71 @@ class Taxonomy:
                 # Skip the "please choose" placeholder, which has no id.
                 if value and value.isdigit() and label:
                     found[key][label] = value
+
+        # Enumerated filters (fuel, transmission, colour, body, damage record,
+        # seller type, listing age...). sahibinden addresses these as
+        # a{attributeId}={valueId}; both numbers are opaque and category
+        # specific, so the only safe source is the site's own facet links.
+        # Each `ul.facetedSearchList` carries its parameter as a CSS class and
+        # sits under a `dt.collapseTitle` naming the group, so the whole
+        # vocabulary can be lifted verbatim rather than guessed.
+        for section in soup.select("div.search-filter-section"):
+            title_el = section.select_one("dt.collapseTitle")
+            title = text(title_el)
+            if not title:
+                continue
+            for ul in section.select("ul.facetedSearchList"):
+                classes = [c for c in (ul.get("class") or [])
+                           if c not in ("facetedSearchList", "scroll-pane")]
+                options: dict[str, str] = {}
+                param_used = None
+                for link in ul.select("a[href]"):
+                    query = dict(parse_qsl(urlparse(link["href"]).query))
+                    for candidate in classes:
+                        if candidate in query:
+                            label = text(link)
+                            if label:
+                                options[label] = query[candidate]
+                                param_used = candidate
+                            break
+                if options and param_used:
+                    found["enums"][title] = {"param": param_used, "options": options}
+
+        # Faceted search never offers the filter you already have applied, so a
+        # page saved with "Agir Hasar Kayitli: Hayir" advertises only "Evet" —
+        # and the most useful value would be permanently unharvestable. The
+        # applied-filter chips fill that gap: each chip's link *removes* its own
+        # filter, so the parameter missing from a chip's href is the one that
+        # chip represents, and the chip's text is its label.
+        chips = soup.select(".currentFilters a[href]")
+        chip_params: list[tuple[str, dict]] = []
+        for chip in chips:
+            href = chip.get("href") or ""
+            if not href:
+                continue
+            chip_params.append((text(chip), dict(parse_qsl(urlparse(href).query))))
+
+        if len(chip_params) > 1:
+            everything: dict[str, str] = {}
+            for _, query in chip_params:
+                everything.update(query)
+            known_params = {spec["param"]: group
+                            for group, spec in found["enums"].items()}
+            for label, query in chip_params:
+                removed = {k: v for k, v in everything.items() if k not in query}
+                # Exactly one is the signature of a real filter chip. The
+                # "clear all" control drops every parameter and the "hide
+                # selections" toggle drops none; both would otherwise be
+                # harvested as filter values named after their button text.
+                if len(removed) != 1 or not label:
+                    continue
+                param, value = next(iter(removed.items()))
+                group = known_params.get(param)
+                # Only merge into groups we already recognise; the boolean
+                # paint/change flags are handled separately and would
+                # otherwise appear as bogus one-option enums.
+                if group:
+                    found["enums"][group]["options"].setdefault(label, value)
 
         for inp in soup.select("input[name$=_min], input[name$=_max]"):
             label = (inp.get("data-label") or "").strip()
@@ -150,19 +256,30 @@ class Taxonomy:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text(
             json.dumps({"brands": self.brands, "cities": self.cities,
-                        "filters": self.filters},
+                        "filters": self.filters, "enums": self.enums},
                        ensure_ascii=False, indent=2, sort_keys=True),
             encoding="utf-8",
         )
 
     def merge(self, found: dict) -> dict:
-        added = {"brands": 0, "cities": 0, "filters": 0}
+        added = {"brands": 0, "cities": 0, "filters": 0, "enums": 0}
         for key in ("brands", "cities", "filters"):
             target = getattr(self, key)
             for label, value in found.get(key, {}).items():
                 if label not in target:
                     target[label] = value
                     added[key] += 1
+
+        # Enum groups merge option-by-option: a later page may reveal values an
+        # earlier one had applied (and therefore hid), so replacing the group
+        # wholesale would keep losing them.
+        for group, spec in found.get("enums", {}).items():
+            existing = self.enums.setdefault(group, {"param": spec["param"],
+                                                     "options": {}})
+            for label, value in spec["options"].items():
+                if label not in existing["options"]:
+                    existing["options"][label] = value
+                    added["enums"] += 1
         self._brand_slugs = {slugify(n): n for n in self.brands}
         self._city_slugs = {slugify(n): n for n in self.cities}
         return added
@@ -178,6 +295,40 @@ class Taxonomy:
         name, ambiguous = _resolve(value, self._city_slugs, {}, 0.8)
         return (name, ambiguous) if detail else name
 
+    def resolve_enum(self, flag: str, value: str) -> dict:
+        """Turn --fuel diesel into ('a17', '22'), or explain why it cannot.
+
+        Never falls back to a guess. An unrecognised option returns the valid
+        ones instead, because a silently-dropped filter would give the caller a
+        confident answer about a market they did not ask for.
+        """
+        group = ENUM_FLAGS.get(flag)
+        spec = self.enums.get(group) if group else None
+        if not spec:
+            return {"error": f"no harvested filter for --{flag.replace('_','-')}",
+                    "hint": "run: sahibinden-cli filters"}
+
+        options = spec["options"]
+        wanted = ENUM_SYNONYMS.get(value.strip().lower(), value)
+        lookup = {slugify(k): k for k in options}
+
+        key = lookup.get(slugify(wanted))
+        if key is None:
+            prefixed = sorted(k for s, k in lookup.items()
+                              if s.startswith(slugify(wanted)))
+            if len(prefixed) == 1:
+                key = prefixed[0]
+            elif len(prefixed) > 1:
+                return {"error": f"{value!r} matches {len(prefixed)} options for "
+                                 f"--{flag.replace('_','-')}", "options": prefixed}
+        if key is None:
+            near = get_close_matches(slugify(wanted), list(lookup), n=3, cutoff=0.6)
+            return {"error": f"unknown {group} value {value!r}",
+                    "options": [lookup[n] for n in near] or sorted(options)}
+
+        return {"param": spec["param"], "value": options[key], "label": key,
+                "group": group}
+
     def build_url(
         self,
         brand: str,
@@ -191,6 +342,7 @@ class Taxonomy:
         max_price: int | None = None,
         undamaged_only: bool = False,
         sort: str = "price_asc",
+        enums: dict[str, str] | None = None,
     ) -> dict:
         """Compose a search URL, reporting what matched and what was guessed."""
         known_brand, ambiguous = self.match_brand(brand, detail=True)
@@ -243,6 +395,16 @@ class Taxonomy:
         add_range("Yıl", min_year, max_year)
         add_range("KM", None, max_km)
         add_range("Fiyat", min_price, max_price)
+        applied_enums = {}
+        for flag, value in (enums or {}).items():
+            if value is None:
+                continue
+            resolved_enum = self.resolve_enum(flag, value)
+            if resolved_enum.get("error"):
+                return resolved_enum
+            params.append((resolved_enum["param"], resolved_enum["value"]))
+            applied_enums[resolved_enum["group"]] = resolved_enum["label"]
+
         if undamaged_only:
             params += [("unpaintedParts", "true"), ("unchangingTracks", "true")]
         if sort:
@@ -273,6 +435,7 @@ class Taxonomy:
             "verified": False,
             "model_is_guess": bool(model),
             "post_filters": post_filters,
+            "filters_applied": applied_enums,
         }
 
 

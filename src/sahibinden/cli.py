@@ -27,7 +27,7 @@ from .parse.detail import parse_detail
 from .fetch.fetcher import BREAKER_PATH
 from .fetch.guard import Breaker
 from .store import Store
-from .taxonomy import Taxonomy, apply_post_filters
+from .taxonomy import ENUM_FLAGS, Taxonomy, apply_post_filters
 
 EXIT_OK, EXIT_ERROR, EXIT_REFUSED = 0, 1, 2
 
@@ -61,6 +61,7 @@ def cmd_search(args) -> int:
             min_year=args.min_year, max_year=args.max_year, max_km=args.max_km,
             min_price=args.min_price, max_price=args.max_price,
             undamaged_only=args.undamaged, sort=args.sort,
+            enums={flag: getattr(args, flag, None) for flag in ENUM_FLAGS},
         )
         if resolved.get("error"):
             print(json.dumps(resolved, ensure_ascii=False, indent=2)
@@ -78,6 +79,19 @@ def cmd_search(args) -> int:
         return EXIT_REFUSED
 
     matched = apply_post_filters(result["listings"], post)
+
+    # When the search is city-scoped, sahibinden drops the province from the
+    # location column and shows district + neighbourhood instead. Stored as-is
+    # that puts "Çankaya" in the city column, and a later `price --city Ankara`
+    # would silently miss every row it just collected. The province is known
+    # from the query, so restore it and shift the parsed pair down one level.
+    scoped_city = (resolved or {}).get("city")
+    if scoped_city:
+        for row in matched:
+            row["neighbourhood"] = row.get("district")
+            row["district"] = row.get("city")
+            row["city"] = scoped_city
+
     result["listings"] = matched
     result["post_filters_applied"] = post
     result["resolved"] = resolved
@@ -110,6 +124,9 @@ def cmd_search(args) -> int:
                   f"of {d['total_results']} by {args.sort}, not the whole market.")
             print(f"                   Narrow with --min-price/--max-price/"
                   f"--min-year/--max-km/--city, or raise --pages.")
+        if r.get("filters_applied"):
+            for group, label in r["filters_applied"].items():
+                print(f"  {group:<15}: {label}")
         if d["post_filters_applied"]:
             print(f"  post-filters   : {d['post_filters_applied']} "
                   f"(applied to rows; sahibinden cannot filter these in-URL)")
@@ -593,6 +610,35 @@ def cmd_sql(args) -> int:
     return EXIT_OK
 
 
+
+def cmd_filters(args) -> int:
+    """List every filter harvested from sahibinden's own search form."""
+    tax = Taxonomy()
+    groups = {}
+    for flag, group in ENUM_FLAGS.items():
+        spec = tax.enums.get(group)
+        if spec:
+            groups[flag] = {"group": group, "param": spec["param"],
+                            "options": sorted(spec["options"])}
+    data = {"ranges": tax.filters, "enums": groups}
+
+    def human(d):
+        print("\n  numeric ranges")
+        for label, spec in d["ranges"].items():
+            bounds = (f"  ({spec['min']}-{spec['max']})"
+                      if spec.get("min") or spec.get("max") else "")
+            print(f"    {label:<10} {spec['param']}_min / {spec['param']}_max{bounds}")
+        print("\n  choices")
+        for flag, spec in d["enums"].items():
+            opts = ", ".join(spec["options"][:6])
+            more = f"  (+{len(spec['options'])-6} more)" if len(spec["options"]) > 6 else ""
+            print(f"    --{flag.replace('_','-'):<15} {spec['group']}")
+            print(f"      {opts}{more}")
+
+    emit(data, args.json, human)
+    return EXIT_OK
+
+
 def cmd_capabilities(args) -> int:
     """Machine-readable description of the whole CLI, for agent discovery."""
     parser = build_parser()
@@ -683,6 +729,34 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-km", type=int, help="applied to results, not the URL")
     p.add_argument("--min-price", type=int, help="applied in the URL")
     p.add_argument("--max-price", type=int, help="applied in the URL")
+    p.add_argument("--fuel", dest="fuel",
+                   help="Benzin/Dizel/hybrid")
+    p.add_argument("--transmission", dest="transmission",
+                   help="automatic/manual")
+    p.add_argument("--condition", dest="condition",
+                   help="used/new/imported")
+    p.add_argument("--body", dest="body",
+                   help="sedan/hatchback-5-kapi/...")
+    p.add_argument("--power", dest="power",
+                   help="HP band, e.g. '101 - 125 HP'")
+    p.add_argument("--engine", dest="engine",
+                   help="cm3 band")
+    p.add_argument("--drive", dest="drive",
+                   help="fwd/rwd/4WD")
+    p.add_argument("--color", dest="color",
+                   help="white/black/...")
+    p.add_argument("--warranty", dest="warranty",
+                   help="yes/no")
+    p.add_argument("--heavy-damage", dest="heavy_damage",
+                   help="yes/no — agir hasar kayitli")
+    p.add_argument("--plate", dest="plate",
+                   help="plate nationality")
+    p.add_argument("--seller", dest="seller",
+                   help="owner/dealer/authorised")
+    p.add_argument("--tradeable", dest="tradeable",
+                   help="yes/no")
+    p.add_argument("--listed-within", dest="listed_within",
+                   help="e.g. 'Son 3 gun icinde'")
     p.add_argument("--undamaged", action="store_true",
                    help="only unpainted/unchanged parts (sahibinden-side filter)")
     p.add_argument("--sort", default="price_asc",
@@ -702,6 +776,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("-v", "--verbose", action="store_true",
                    help="list what is recorded: models, coverage, tracked searches")
     p.set_defaults(func=cmd_status)
+
+    p = sub.add_parser("filters", parents=[shared],
+                       help="list available search filters and their values",
+                       description="Every filter harvested from sahibinden's own "
+                                   "search form, with the values each accepts.")
+    p.set_defaults(func=cmd_filters)
 
     p = sub.add_parser("brands", parents=[shared], help="list known vehicle brands",
                        description="Brands taken from sahibinden's own dropdowns.")

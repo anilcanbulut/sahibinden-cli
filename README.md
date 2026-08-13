@@ -55,6 +55,32 @@ sahibinden-cli status
 `search` fetches; `price`, `listing` and `history` read the local database and
 cost nothing.
 
+### Filters
+
+Everything sahibinden's own sidebar offers. See them all with:
+
+```powershell
+sahibinden-cli filters
+```
+
+| | |
+|---|---|
+| Ranges | `--min-price` `--max-price` `--min-year` `--max-year` `--max-km` |
+| Choices | `--fuel` `--transmission` `--condition` `--body` `--power` `--engine` `--drive` `--color` `--warranty` `--heavy-damage` `--plate` `--seller` `--tradeable` `--listed-within` |
+| Location | `--city` |
+| Paint/change | `--undamaged` |
+
+Values accept English or Turkish, partial or full: `--fuel diesel` and
+`--fuel Dizel` both give `a17=22`; `--heavy-damage no` gives `a116445=1263354`.
+An unrecognised value is an error listing the valid ones, never a dropped
+filter — a filter silently ignored would return a confident answer about a
+market you did not ask for.
+
+The attribute ids are harvested from sahibinden's own facet links, not guessed.
+Faceted search hides the filter you already have applied, so values that were
+active on a captured page are recovered from the applied-filter chips (each
+chip's link removes exactly one parameter, which identifies it).
+
 ### Narrowing is yours to do
 
 A sweep fetches **5 pages by default** (~100 listings), whatever the search
