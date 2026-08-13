@@ -466,6 +466,72 @@ def cmd_nightly(args) -> int:
     return EXIT_OK
 
 
+
+def cmd_sql(args) -> int:
+    """Read-only SQL against the local database.
+
+    Opened with mode=ro at the URI level rather than by pattern-matching the
+    query text: a denylist of keywords is trivially bypassed and would still
+    let a malformed query damage months of collected data. sqlite refuses the
+    write itself, so there is nothing to get wrong here.
+    """
+    import sqlite3
+
+    if args.schema:
+        query = ("SELECT name, sql FROM sqlite_master "
+                 "WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
+    elif args.tables:
+        query = ("SELECT name FROM sqlite_master WHERE type='table' "
+                 "AND name NOT LIKE 'sqlite_%' ORDER BY name")
+    elif args.query:
+        query = args.query
+    else:
+        print("error: give a query, or --tables / --schema", file=sys.stderr)
+        return EXIT_ERROR
+
+    path = Path(config.db_path)
+    if not path.exists():
+        print(f"error: no database at {path}. Run a search first.", file=sys.stderr)
+        return EXIT_ERROR
+
+    try:
+        db = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        db.row_factory = sqlite3.Row
+        rows = db.execute(query).fetchmany(args.limit)
+        columns = [d[0] for d in db.execute(query).description]
+    except sqlite3.Error as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_ERROR
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass
+
+    data = {"query": query, "columns": columns,
+            "row_count": len(rows), "rows": [dict(r) for r in rows]}
+
+    def human(d):
+        if not d["rows"]:
+            print("  (no rows)")
+            return
+        if args.schema:
+            for r in d["rows"]:
+                print(f"\n{r['sql']};")
+            return
+        widths = {c: max(len(c), *(len(str(r[c])) for r in d["rows"])) for c in d["columns"]}
+        widths = {c: min(w, 34) for c, w in widths.items()}
+        print("  " + "  ".join(c[:widths[c]].ljust(widths[c]) for c in d["columns"]))
+        print("  " + "  ".join("-" * widths[c] for c in d["columns"]))
+        for r in d["rows"]:
+            print("  " + "  ".join(str(r[c])[:widths[c]].ljust(widths[c])
+                                   for c in d["columns"]))
+        print(f"\n  {d['row_count']} row(s)")
+
+    emit(data, args.json, human)
+    return EXIT_OK
+
+
 def cmd_capabilities(args) -> int:
     """Machine-readable description of the whole CLI, for agent discovery."""
     parser = build_parser()
@@ -646,6 +712,18 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-details", action="store_true",
                    help="sweeps only, skip detail fetching")
     p.set_defaults(func=cmd_nightly)
+
+    p = sub.add_parser("sql", parents=[shared],
+                       help="read-only SQL against the local database",
+                       description="Run a query against data/sahibinden.db. "
+                                   "The connection is opened read-only, so "
+                                   "writes are refused by sqlite itself.",
+                       formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    p.add_argument("query", nargs="?", help="SQL to run")
+    p.add_argument("--tables", action="store_true", help="list tables")
+    p.add_argument("--schema", action="store_true", help="dump CREATE statements")
+    p.add_argument("--limit", type=int, default=50, help="max rows returned")
+    p.set_defaults(func=cmd_sql)
 
     p = sub.add_parser("reparse", parents=[shared],
                        help="re-parse stored raw HTML (no network)",

@@ -67,6 +67,7 @@ cost nothing.
 | `history` | no | price trail for one listing |
 | `reparse` | no | re-run parsers over saved HTML |
 | `status` | no | budget, cooldown, database stats |
+| `sql` | no | read-only SQL against the local database |
 | `brands` / `cities` | no | what the resolver accepts |
 | `config` | no | show or persist settings |
 | `capabilities` | no | full JSON description of every command |
@@ -86,6 +87,27 @@ An insurance write-off, repaired well enough that every panel reads original —
 and the cheapest car in its group. Ranking on the diagram alone puts exactly the
 wrong car first. All three are captured and shown together; `?` means not yet
 checked, never "clean".
+
+## Looking inside the database
+
+`data/sahibinden.db` is plain SQLite; any GUI will open it. From the CLI:
+
+```powershell
+sahibinden-cli sql --tables
+sahibinden-cli sql --schema
+sahibinden-cli sql "SELECT brand, model, COUNT(*) n, MIN(last_price_try) FROM listings GROUP BY brand, model"
+```
+
+The connection is opened read-only at the URI level, so writes are refused by
+sqlite itself rather than by pattern-matching the query text.
+
+| Table | Holds |
+|---|---|
+| `listings` | one row per car: price, year, km, brand, first/last seen, delisted |
+| `price_observations` | price history — written only when a price changes |
+| `listing_details` | damage diagram, agir hasar flag, description, spec |
+| `sweep_runs` | every crawl: url, pages fetched, whether it was complete |
+| `sweep_appearances` | which listings appeared in which sweep (drives delisting) |
 
 ## Rate limiting
 
