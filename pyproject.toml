@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sahibinden-cli"
+version = "0.1.0"
+description = "Rate-limited CLI for querying sahibinden.com vehicle and property listings from a local cache."
+requires-python = ">=3.10"
+dependencies = [
+    "beautifulsoup4>=4.12",
+    "lxml>=5.0",
+    "patchright>=1.50",
+]
+
+# Installing with `pip install -e .` puts `sahibinden-cli` on PATH, so the tool
+# works from any directory and any terminal — which matters because a coding
+# agent will invoke it from whatever folder it happens to be working in.
+# Editable keeps the source in place, so data/, browser-profile/ and the
+# project-relative paths resolve exactly as they do now.
+[project.scripts]
+sahibinden-cli = "sahibinden.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

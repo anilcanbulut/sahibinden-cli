@@ -1,0 +1,31 @@
+# The logged-in browser profile. Contains live sahibinden session cookies for
+# the burner account — committing it hands anyone with repo access a working
+# authenticated session. Never track this, even in a private repo.
+browser-profile/
+
+# Local database, raw page captures, breaker state and config.
+# Raw captures are full listing pages: they include seller phone numbers and,
+# on any page fetched while signed in, session-bearing markup.
+data/
+
+# Fingerprint measurements of the real browser: GPU model, screen geometry,
+# timezone, TLS hashes. Identifying, and of no use to anyone else.
+fingerprint/
+
+# Saved sample pages are large and carry the same seller/session content as
+# raw captures. Keep the directory itself so the layout is obvious.
+samples/*.html
+!samples/.gitkeep
+
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
