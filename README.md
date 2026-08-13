@@ -55,6 +55,31 @@ sahibinden-cli status
 `search` fetches; `price`, `listing` and `history` read the local database and
 cost nothing.
 
+### Narrowing is yours to do
+
+A sweep fetches **5 pages by default** (~100 listings), whatever the search
+returns. It does not widen on its own, and it does not narrow on your behalf —
+use the same filters you would use on the website:
+
+```powershell
+sahibinden-cli search --brand Fiat --model Egea `
+    --min-year 2019 --max-km 150000 --max-price 700000 --city Ankara --undamaged
+```
+
+Well-filtered searches are also cheaper and better: one filtered Passat query
+(`--min-year 2015 --max-price 900000`) cut 3,228 listings to 14 and completed in
+a single request, where the unfiltered version was 162 pages.
+
+When a sweep does not reach the end, the output says so — those rows are the
+cheapest ~100 by whatever `--sort` you used, not a sample of the market, and
+reading a median off them would be wrong.
+
+Raise the cap per run with `--pages N`, or permanently:
+
+```powershell
+sahibinden-cli config --set default_pages=10
+```
+
 ## Commands
 
 | Command | Network | Purpose |
@@ -66,7 +91,7 @@ cost nothing.
 | `listing` | no | full record: row, price history, damage, description |
 | `history` | no | price trail for one listing |
 | `reparse` | no | re-run parsers over saved HTML |
-| `status` | no | budget, cooldown, database stats |
+| `status` | no | budget, cooldown, database stats (`-v` lists what is recorded) |
 | `sql` | no | read-only SQL against the local database |
 | `brands` / `cities` | no | what the resolver accepts |
 | `config` | no | show or persist settings |

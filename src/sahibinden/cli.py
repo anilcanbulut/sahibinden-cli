@@ -104,6 +104,12 @@ def cmd_search(args) -> int:
                   f"{'confirmed by results' if d['total_results'] else 'NO RESULTS — check spelling'}")
         print(f"  total on site  : {d['total_results']}")
         print(f"  pages fetched  : {d['pages_fetched']} of {d['pages_available']}")
+        if (d.get("pages_available") or 0) > (d.get("pages_fetched") or 0):
+            seen = (d["pages_fetched"] or 0) * 20
+            print(f"  NOTE           : partial sweep — these are the first ~{seen} "
+                  f"of {d['total_results']} by {args.sort}, not the whole market.")
+            print(f"                   Narrow with --min-price/--max-price/"
+                  f"--min-year/--max-km/--city, or raise --pages.")
         if d["post_filters_applied"]:
             print(f"  post-filters   : {d['post_filters_applied']} "
                   f"(applied to rows; sahibinden cannot filter these in-URL)")
@@ -135,6 +141,7 @@ def cmd_status(args) -> int:
     breaker = Breaker(BREAKER_PATH)
     with Store(config.db_path) as store:
         stats = store.stats()
+        inventory = store.inventory() if args.verbose else None
     data = {
         "budget_remaining": breaker.remaining,
         "daily_budget": breaker.daily_limit,
@@ -145,6 +152,7 @@ def cmd_status(args) -> int:
         "config": config.describe(),
         "config_path": str(CONFIG_PATH),
         "database": stats,
+        "inventory": inventory,
     }
 
     def human(d):
@@ -153,6 +161,32 @@ def cmd_status(args) -> int:
               f"(safest time to sweep — an IP ban then costs you nothing)")
         print(f"  config     : {d['config']}")
         print("  database   : " + ", ".join(f"{k}={v}" for k, v in d["database"].items()))
+        inv = d.get("inventory")
+        if not inv:
+            print("\n  (run with --verbose to see what is recorded)")
+            return
+        print(f"  collecting : {inv['collecting_since']} -> {inv['last_updated']}")
+        print("\n  recorded by model")
+        print(f"  {'brand':<12}{'model':<10}{'rows':>6}{'active':>8}{'damage':>8}"
+              f"{'cities':>8}  price range")
+        print("  " + "-" * 74)
+        for g in inv["by_model"]:
+            rng = (f"{g['min_price']:,} - {g['max_price']:,} TL"
+                   if g["min_price"] else "-")
+            print(f"  {g['brand'] or '?':<12}{g['model'] or '?':<10}{g['listings']:>6}"
+                  f"{g['active']:>8}{g['with_damage']:>8}{g['cities']:>8}  {rng}")
+        print("\n  tracked searches (re-swept by `nightly`)")
+        for s in inv["tracked_searches"]:
+            depth = (f"{s['deepest_pages']}/{s['pages_available']} pages"
+                     if s["pages_available"] else "?")
+            state = "complete" if s["ever_complete"] else "PARTIAL"
+            print(f"  - {state:<9} {depth:<14} {s['sweeps']} sweep(s), "
+                  f"site has {s['site_total'] or '?'}")
+            print(f"    {s['base_url'][:96]}")
+        partial = [s for s in inv["tracked_searches"] if not s["ever_complete"]]
+        if partial:
+            print(f"\n  {len(partial)} search(es) never swept completely — "
+                  "delisting and days-to-sell stay empty until one is.")
 
     emit(data, args.json, human)
     return EXIT_REFUSED if breaker.cooling_down else EXIT_OK
@@ -450,7 +484,10 @@ def cmd_nightly(args) -> int:
         if Breaker(BREAKER_PATH).remaining <= config.detail_budget:
             report["searches"].append({"url": url, "skipped": "budget reserved for details"})
             continue
-        result = sweep(url, max_pages=args.pages)
+        # Same page cap as `search`. Sweeping to completion by default would
+        # spend hundreds of requests on a broad search; narrowing is the
+        # caller's job, exactly as it is on the website itself.
+        result = sweep(url, max_pages=args.pages or config.default_pages)
         if result.get("error"):
             report["searches"].append({"url": url, "error": result["error"]})
             break
@@ -650,7 +687,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="only unpainted/unchanged parts (sahibinden-side filter)")
     p.add_argument("--sort", default="price_asc",
                    choices=["price_asc", "price_desc", "date_desc", "date_asc"])
-    p.add_argument("--pages", type=int, help="pages to fetch (default: config)")
+    p.add_argument("--pages", type=int,
+                   help="pages to fetch, 20 listings each "
+                        "(default: config default_pages, currently 5)")
     p.add_argument("--layout", default="vehicle", choices=["vehicle", "property"],
                    help="column layout of the results table")
     p.add_argument("--limit", type=int, default=20, help="rows to print")
@@ -660,6 +699,8 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("status", parents=[shared], help="budget, breaker and database state",
                        description="Show remaining request budget, cooldown state "
                                    "and what is in the local database.")
+    p.add_argument("-v", "--verbose", action="store_true",
+                   help="list what is recorded: models, coverage, tracked searches")
     p.set_defaults(func=cmd_status)
 
     p = sub.add_parser("brands", parents=[shared], help="list known vehicle brands",
@@ -732,7 +773,7 @@ def build_parser() -> argparse.ArgumentParser:
                                    "run during quiet hours.",
                        formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     p.add_argument("--pages", type=int, default=None,
-                   help="cap pages per search (default: complete, budget allowing)")
+                   help="pages per search (default: config default_pages)")
     p.add_argument("--no-details", action="store_true",
                    help="sweeps only, skip detail fetching")
     p.set_defaults(func=cmd_nightly)

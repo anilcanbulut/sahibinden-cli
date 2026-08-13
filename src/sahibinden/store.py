@@ -407,6 +407,51 @@ class Store:
             "sweeps": q("SELECT COUNT(*) FROM sweep_runs"),
         }
 
+    def inventory(self) -> dict:
+        """What is actually recorded, so `status` can answer it without SQL.
+
+        Coverage matters more than raw counts here: a sweep that stopped after
+        five of 308 pages still stores 100 listings, and reading that as "the
+        Egea market" would be badly wrong. So each tracked search reports how
+        deep it went and whether any sweep of it was ever complete — completeness
+        is also what gates delisting detection.
+        """
+        searches = [dict(r) for r in self.db.execute(
+            "SELECT base_url, layout, COUNT(*) AS sweeps,"
+            "       MAX(started_at) AS last_swept,"
+            "       MAX(complete) AS ever_complete,"
+            "       MAX(total_results) AS site_total,"
+            "       MAX(pages_fetched) AS deepest_pages,"
+            "       MAX(pages_available) AS pages_available"
+            " FROM sweep_runs GROUP BY base_url ORDER BY last_swept DESC"
+        ).fetchall()]
+
+        groups = [dict(r) for r in self.db.execute(
+            "SELECT l.brand, l.model, COUNT(*) AS listings,"
+            "       SUM(CASE WHEN l.delisted_at IS NULL THEN 1 ELSE 0 END) AS active,"
+            "       COUNT(d.listing_id) AS with_damage,"
+            "       MIN(l.last_price_try) AS min_price,"
+            "       MAX(l.last_price_try) AS max_price,"
+            "       COUNT(DISTINCT l.city) AS cities"
+            " FROM listings l LEFT JOIN listing_details d"
+            "   ON d.listing_id = l.listing_id"
+            " WHERE l.brand IS NOT NULL"
+            " GROUP BY l.brand, l.model ORDER BY listings DESC"
+        ).fetchall()]
+
+        span = self.db.execute(
+            "SELECT MIN(first_seen_at) AS since, MAX(last_seen_at) AS until"
+            " FROM listings"
+        ).fetchone()
+
+        return {
+            "totals": self.stats(),
+            "collecting_since": span["since"],
+            "last_updated": span["until"],
+            "tracked_searches": searches,
+            "by_model": groups,
+        }
+
     def price_history(self, listing_id: str) -> list[sqlite3.Row]:
         return self.db.execute(
             "SELECT price_try, observed_at FROM price_observations"
