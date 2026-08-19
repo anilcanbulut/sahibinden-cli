@@ -110,6 +110,34 @@ ENUM_FLAGS = {
     "listed_within": "İlan Tarihi",
 }
 
+#: CLI flag -> sahibinden's own boolean parameter. Unlike the enum attributes
+#: these are addressed by name rather than by an opaque numeric id, and the
+#: names are lifted verbatim from the checkboxes in the sidebar's "Boya,
+#: Değişen Parça" and "Fotoğraf, Video" sections. Harvesting confirms them and
+#: supplies the labels; it is not required for them to work, so a stale
+#: taxonomy degrades to "unverified" rather than to a dropped filter.
+FLAG_FILTERS = {
+    "unpainted": "unpaintedParts",
+    "unchanged": "unchangingTracks",
+    "has_video": "hasVideo",
+    "has_clip": "hasClip",
+}
+
+#: The unit tabs above the price inputs. The parameter is named but its values
+#: are opaque ids, so those come from the harvest and are never assumed.
+CURRENCY_PARAM = "price_currency"
+
+CURRENCY_SYNONYMS = {
+    "try": "TL", "tl": "TL", "lira": "TL", "₺": "TL",
+    "usd": "USD", "dollar": "USD", "dolar": "USD", "$": "USD",
+    "eur": "EUR", "euro": "EUR", "€": "EUR",
+    "gbp": "GBP", "pound": "GBP", "sterlin": "GBP", "£": "GBP",
+}
+
+#: Free-text filter ("Kelime ile filtrele") at the foot of the sidebar.
+KEYWORD_PARAM = "query_text"
+KEYWORD_DESC_PARAM = "query_desc"
+
 #: English input people will reach for, mapped onto sahibinden's own labels.
 ENUM_SYNONYMS = {
     "gasoline": "Benzin", "petrol": "Benzin", "diesel": "Dizel",
@@ -130,7 +158,9 @@ class Taxonomy:
         self.path = Path(path)
         data = (
             json.loads(self.path.read_text(encoding="utf-8"))
-            if self.path.exists() else {"brands": {}, "cities": {}, "filters": {}, "enums": {}}
+            if self.path.exists()
+            else {"brands": {}, "cities": {}, "filters": {}, "enums": {},
+                  "flags": {}, "units": {}}
         )
         self.brands: dict[str, str] = data.get("brands", {})
         self.cities: dict[str, str] = data.get("cities", {})
@@ -140,6 +170,11 @@ class Taxonomy:
         #: Enumerated filters harvested from the site's facet links,
         #: keyed by its own Turkish group name ("Yakıt / Motor Tipi").
         self.enums: dict[str, dict] = data.get("enums", {})
+        #: Boolean checkboxes that are their own parameter rather than a value
+        #: of a shared one ("Boyasız" -> unpaintedParts), keyed by group name.
+        self.flags: dict[str, dict[str, str]] = data.get("flags", {})
+        #: Unit tabs, keyed by parameter ("price_currency" -> {"TL": "1"}).
+        self.units: dict[str, dict[str, str]] = data.get("units", {})
         self._brand_slugs = {slugify(name): name for name in self.brands}
         self._city_slugs = {slugify(name): name for name in self.cities}
 
@@ -162,7 +197,8 @@ class Taxonomy:
         from .parse.util import text  # noqa: F401  (local import keeps deps lazy)
 
         soup = BeautifulSoup(html, "lxml")
-        found: dict[str, dict] = {"brands": {}, "cities": {}, "filters": {}, "enums": {}}
+        found: dict[str, dict] = {"brands": {}, "cities": {}, "filters": {},
+                                  "enums": {}, "flags": {}, "units": {}}
 
         for select in soup.select("select"):
             key = {"brand": "brands", "city": "cities"}.get(select.get("name") or "")
@@ -186,11 +222,20 @@ class Taxonomy:
             title = text(title_el)
             if not title:
                 continue
+            # The unit tabs above the price inputs ("TL | USD | EUR | GBP").
+            # The parameter is in data-id and the value in data-value; the
+            # value is an opaque id, so it is lifted rather than assumed.
+            for tab in section.select("a.js-unit-tab[data-id][data-value]"):
+                label = (tab.get("title") or text(tab)).strip()
+                if label:
+                    found["units"].setdefault(tab["data-id"], {})[label] = tab["data-value"]
+
             for ul in section.select("ul.facetedSearchList"):
                 classes = [c for c in (ul.get("class") or [])
                            if c not in ("facetedSearchList", "scroll-pane")]
                 options: dict[str, str] = {}
                 param_used = None
+                multi = False
                 for link in ul.select("a[href]"):
                     query = dict(parse_qsl(urlparse(link["href"]).query))
                     for candidate in classes:
@@ -199,9 +244,25 @@ class Taxonomy:
                             if label:
                                 options[label] = query[candidate]
                                 param_used = candidate
+                                # Whether a group accepts several values at
+                                # once is not a guess either: sahibinden draws
+                                # multi-select groups as checkboxes and
+                                # single-select ones (Kimden, İlan Tarihi) as
+                                # radios, and says which in the link's class.
+                                multi = "facetedCheckbox" in (link.get("class") or [])
                             break
+                    else:
+                        # No shared parameter: this list is a set of boolean
+                        # flags, where each option *is* its own parameter
+                        # (Boyasız -> unpaintedParts, Videolu ilanlar ->
+                        # hasVideo) rather than a value of a common one.
+                        flag = link.get("name") or link.get("data-id")
+                        label = text(link)
+                        if flag and label and link.get("data-value") == "true":
+                            found["flags"].setdefault(title, {})[label] = flag
                 if options and param_used:
-                    found["enums"][title] = {"param": param_used, "options": options}
+                    found["enums"][title] = {"param": param_used, "options": options,
+                                             "multi": multi}
 
         # Faceted search never offers the filter you already have applied, so a
         # page saved with "Agir Hasar Kayitli: Hayir" advertises only "Evet" —
@@ -256,13 +317,15 @@ class Taxonomy:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text(
             json.dumps({"brands": self.brands, "cities": self.cities,
-                        "filters": self.filters, "enums": self.enums},
+                        "filters": self.filters, "enums": self.enums,
+                        "flags": self.flags, "units": self.units},
                        ensure_ascii=False, indent=2, sort_keys=True),
             encoding="utf-8",
         )
 
     def merge(self, found: dict) -> dict:
-        added = {"brands": 0, "cities": 0, "filters": 0, "enums": 0}
+        added = {"brands": 0, "cities": 0, "filters": 0, "enums": 0,
+                 "flags": 0, "units": 0}
         for key in ("brands", "cities", "filters"):
             target = getattr(self, key)
             for label, value in found.get(key, {}).items():
@@ -276,10 +339,29 @@ class Taxonomy:
         for group, spec in found.get("enums", {}).items():
             existing = self.enums.setdefault(group, {"param": spec["param"],
                                                      "options": {}})
+            # Checkbox-vs-radio is refreshed rather than merged: the page just
+            # read is the authority on whether the group takes several values,
+            # and a group recorded before that was tracked has no answer.
+            existing["multi"] = bool(spec.get("multi"))
             for label, value in spec["options"].items():
                 if label not in existing["options"]:
                     existing["options"][label] = value
                     added["enums"] += 1
+
+        for group, options in found.get("flags", {}).items():
+            known = self.flags.setdefault(group, {})
+            for label, param in options.items():
+                if label not in known:
+                    known[label] = param
+                    added["flags"] += 1
+
+        for param, options in found.get("units", {}).items():
+            known_units = self.units.setdefault(param, {})
+            for label, value in options.items():
+                if label not in known_units:
+                    known_units[label] = value
+                    added["units"] += 1
+
         self._brand_slugs = {slugify(n): n for n in self.brands}
         self._city_slugs = {slugify(n): n for n in self.cities}
         return added
@@ -295,39 +377,91 @@ class Taxonomy:
         name, ambiguous = _resolve(value, self._city_slugs, {}, 0.8)
         return (name, ambiguous) if detail else name
 
-    def resolve_enum(self, flag: str, value: str) -> dict:
-        """Turn --fuel diesel into ('a17', '22'), or explain why it cannot.
-
-        Never falls back to a guess. An unrecognised option returns the valid
-        ones instead, because a silently-dropped filter would give the caller a
-        confident answer about a market they did not ask for.
-        """
-        group = ENUM_FLAGS.get(flag)
-        spec = self.enums.get(group) if group else None
-        if not spec:
-            return {"error": f"no harvested filter for --{flag.replace('_','-')}",
-                    "hint": "run: sahibinden-cli filters"}
-
-        options = spec["options"]
+    def _match_option(self, options: dict[str, str], value: str,
+                      flag: str, group: str) -> tuple[str | None, dict | None]:
+        """Match one user string against a group's labels, or explain."""
         wanted = ENUM_SYNONYMS.get(value.strip().lower(), value)
         lookup = {slugify(k): k for k in options}
 
         key = lookup.get(slugify(wanted))
         if key is None:
-            prefixed = sorted(k for s, k in lookup.items()
-                              if s.startswith(slugify(wanted)))
+            prefixed = sorted(k for sl, k in lookup.items()
+                              if sl.startswith(slugify(wanted)))
             if len(prefixed) == 1:
                 key = prefixed[0]
             elif len(prefixed) > 1:
-                return {"error": f"{value!r} matches {len(prefixed)} options for "
-                                 f"--{flag.replace('_','-')}", "options": prefixed}
+                return None, {"error": f"{value!r} matches {len(prefixed)} options for "
+                                       f"--{flag.replace('_','-')}", "options": prefixed}
         if key is None:
             near = get_close_matches(slugify(wanted), list(lookup), n=3, cutoff=0.6)
-            return {"error": f"unknown {group} value {value!r}",
-                    "options": [lookup[n] for n in near] or sorted(options)}
+            return None, {"error": f"unknown {group} value {value!r}",
+                          "options": [lookup[n] for n in near] or sorted(options)}
+        return key, None
 
-        return {"param": spec["param"], "value": options[key], "label": key,
-                "group": group}
+    def resolve_enum(self, flag: str, values: str | list[str]) -> dict:
+        """Turn --fuel diesel --fuel hybrid into ('a17', ['22', '1312756']).
+
+        Never falls back to a guess. An unrecognised option returns the valid
+        ones instead, because a silently-dropped filter would give the caller a
+        confident answer about a market they did not ask for.
+
+        Several values are only accepted where sahibinden itself accepts them.
+        The sidebar draws multi-select groups as checkboxes and single-select
+        ones (Kimden, İlan Tarihi) as radios; passing two values to a radio
+        group would send two parameters and let the site pick, which is exactly
+        the silent narrowing this refuses to do elsewhere.
+        """
+        if isinstance(values, str):
+            values = [values]
+        values = [v for v in values if v is not None]
+        if not values:
+            return {}
+
+        group = ENUM_FLAGS.get(flag)
+        spec = self.enums.get(group) if group else None
+        if not spec:
+            return {"error": f"no harvested filter for --{flag.replace('_','-')}",
+                    "hint": "run: sahibinden-cli harvest"}
+
+        if len(values) > 1 and not spec.get("multi"):
+            return {"error": f"--{flag.replace('_','-')} takes one value: sahibinden "
+                             f"offers {group} as a single choice, not a checkbox list",
+                    "given": values,
+                    "hint": "if the sidebar shows checkboxes here, the taxonomy "
+                            "predates multi-select tracking: run "
+                            "sahibinden-cli harvest",
+                    "options": sorted(spec["options"])}
+
+        resolved, labels = [], []
+        for value in values:
+            key, error = self._match_option(spec["options"], value, flag, group)
+            if error:
+                return error
+            resolved.append(spec["options"][key])
+            labels.append(key)
+
+        return {"param": spec["param"], "values": resolved, "labels": labels,
+                "group": group, "multi": bool(spec.get("multi"))}
+
+    def resolve_currency(self, value: str) -> dict:
+        """'usd' -> price_currency=2. The ids are opaque, so they are harvested."""
+        options = self.units.get(CURRENCY_PARAM) or {}
+        if not options:
+            return {"error": "no harvested currency ids",
+                    "hint": "run: sahibinden-cli harvest"}
+        wanted = CURRENCY_SYNONYMS.get(value.strip().lower(), value.strip())
+        for label, ident in options.items():
+            if slugify(label) == slugify(wanted):
+                return {"param": CURRENCY_PARAM, "value": ident, "label": label}
+        return {"error": f"unknown currency {value!r}", "options": sorted(options)}
+
+    def flag_label(self, param: str) -> str | None:
+        """The sidebar wording for a boolean parameter, when it was harvested."""
+        for group, options in self.flags.items():
+            for label, name in options.items():
+                if name == param:
+                    return f"{group}: {label}"
+        return None
 
     def build_url(
         self,
@@ -335,14 +469,20 @@ class Taxonomy:
         model: str | None = None,
         *,
         city: str | None = None,
+        district: str | None = None,
         min_year: int | None = None,
         max_year: int | None = None,
+        min_km: int | None = None,
         max_km: int | None = None,
         min_price: int | None = None,
         max_price: int | None = None,
+        currency: str | None = None,
+        keyword: str | None = None,
+        keyword_in_description: bool = False,
         undamaged_only: bool = False,
+        flags: dict[str, bool] | None = None,
         sort: str = "price_asc",
-        enums: dict[str, str] | None = None,
+        enums: dict[str, str | list[str]] | None = None,
     ) -> dict:
         """Compose a search URL, reporting what matched and what was guessed."""
         known_brand, ambiguous = self.match_brand(brand, detail=True)
@@ -361,6 +501,10 @@ class Taxonomy:
             path += "-" + slugify(model)
 
         known_city = None
+        if district and not city:
+            return {"error": f"--district {district!r} needs --city: sahibinden "
+                             "addresses a district as part of its province "
+                             "(/ankara-cankaya), never on its own"}
         if city:
             known_city, ambiguous_city = self.match_city(city, detail=True)
             if known_city is None:
@@ -369,7 +513,13 @@ class Taxonomy:
                         "did_you_mean": ambiguous_city or [
                             self._city_slugs[s] for s in get_close_matches(
                                 slugify(city), list(self._city_slugs), n=5, cutoff=0.4)]}
+            # Districts are a second path segment glued onto the province
+            # (/ankara-cankaya). Like models they are loaded per-parent over
+            # XHR, so the slug is passed through and verified by whether the
+            # sweep returns anything, rather than validated up front.
             path += "/" + slugify(known_city)
+            if district:
+                path += "-" + slugify(district)
 
         # Range parameters come from the filter map harvested out of
         # sahibinden's own search form, never from guesswork: the ids are
@@ -393,24 +543,61 @@ class Taxonomy:
                 params.append((f"{spec['param']}_max", str(high)))
 
         add_range("Yıl", min_year, max_year)
-        add_range("KM", None, max_km)
+        add_range("KM", min_km, max_km)
         add_range("Fiyat", min_price, max_price)
-        applied_enums = {}
+
+        # The currency tab governs how price_min/price_max are read, so it goes
+        # in whenever it was asked for -- including with no price bounds, where
+        # it still changes which listings the site considers in range.
+        applied_currency = None
+        if currency:
+            resolved_currency = self.resolve_currency(currency)
+            if resolved_currency.get("error"):
+                return resolved_currency
+            params.append((resolved_currency["param"], resolved_currency["value"]))
+            applied_currency = resolved_currency["label"]
+
+        applied_enums: dict[str, list[str]] = {}
         for flag, value in (enums or {}).items():
-            if value is None:
+            if not value:
                 continue
             resolved_enum = self.resolve_enum(flag, value)
             if resolved_enum.get("error"):
                 return resolved_enum
-            params.append((resolved_enum["param"], resolved_enum["value"]))
-            applied_enums[resolved_enum["group"]] = resolved_enum["label"]
+            # Multi-select groups repeat the parameter, which is how the site's
+            # own checkbox links do it (a116445=1263354&a116445=1263353).
+            for ident in resolved_enum["values"]:
+                params.append((resolved_enum["param"], ident))
+            applied_enums[resolved_enum["group"]] = resolved_enum["labels"]
 
+        # Boolean checkboxes are their own parameter rather than a value of a
+        # shared one. --undamaged is the pair of them, kept because it is the
+        # combination anyone actually wants.
+        wanted_flags = {k: v for k, v in (flags or {}).items() if v}
         if undamaged_only:
-            params += [("unpaintedParts", "true"), ("unchangingTracks", "true")]
+            wanted_flags["unpainted"] = True
+            wanted_flags["unchanged"] = True
+        applied_flags, unverified = [], []
+        for name, on in wanted_flags.items():
+            if not on:
+                continue
+            param = FLAG_FILTERS.get(name)
+            if param is None:
+                return {"error": f"unknown flag {name!r}",
+                        "options": sorted(FLAG_FILTERS)}
+            params.append((param, "true"))
+            label = self.flag_label(param)
+            applied_flags.append(label or param)
+            if label is None and self.flags:
+                unverified.append(param)
+
+        if keyword:
+            params.append((KEYWORD_PARAM, keyword))
+            if keyword_in_description:
+                params.append((KEYWORD_DESC_PARAM, "true"))
+
         if sort:
             params.append(("sorting", sort))
-
-        from urllib.parse import urlencode
 
         url = f"{BASE_URL}/{path}"
         if params:
@@ -421,6 +608,7 @@ class Taxonomy:
         post_filters = {
             "min_year": unsupported.get("min_Yıl"),
             "max_year": unsupported.get("max_Yıl"),
+            "min_km": unsupported.get("min_KM"),
             "max_km": unsupported.get("max_KM"),
         }
         post_filters = {k: v for k, v in post_filters.items() if v}
@@ -430,12 +618,19 @@ class Taxonomy:
             "brand": known_brand,
             "model": model,
             "city": known_city,
+            "district": district,
             # The brand and city came from sahibinden's own lists; the model
-            # slug is a guess until a sweep returns a non-zero total_results.
+            # and district slugs are guesses until a sweep returns a non-zero
+            # total_results.
             "verified": False,
             "model_is_guess": bool(model),
+            "district_is_guess": bool(district),
             "post_filters": post_filters,
             "filters_applied": applied_enums,
+            "flags_applied": applied_flags,
+            "unverified_flags": unverified,
+            "currency": applied_currency,
+            "keyword": keyword or None,
         }
 
 
@@ -455,6 +650,8 @@ def apply_post_filters(listings: list[dict], filters: dict) -> list[dict]:
         if filters.get("min_year") and (not year or int(year) < filters["min_year"]):
             return False
         if filters.get("max_year") and (not year or int(year) > filters["max_year"]):
+            return False
+        if filters.get("min_km") and (not km or int(km) < filters["min_km"]):
             return False
         if filters.get("max_km") and (not km or int(km) > filters["max_km"]):
             return False

@@ -57,18 +57,36 @@ cost nothing.
 
 ### Filters
 
-Everything sahibinden's own sidebar offers. See them all with:
+Everything sahibinden's own sidebar offers, in the order the website draws it.
+To see the values each one accepts:
 
 ```powershell
 sahibinden-cli filters
 ```
 
-| | |
+| Sidebar | Flags |
 |---|---|
-| Ranges | `--min-price` `--max-price` `--min-year` `--max-year` `--max-km` |
-| Choices | `--fuel` `--transmission` `--condition` `--body` `--power` `--engine` `--drive` `--color` `--warranty` `--heavy-damage` `--plate` `--seller` `--tradeable` `--listed-within` |
-| Location | `--city` |
-| Paint/change | `--undamaged` |
+| Adres | `--city` (il), `--district` (ilçe) |
+| Fiyat | `--min-price` `--max-price` `--currency TL\|USD\|EUR\|GBP` |
+| Yıl | `--min-year` `--max-year` |
+| Yakıt / Motor Tipi | `--fuel` |
+| Vites | `--transmission` |
+| Araç Durumu | `--condition` |
+| KM | `--min-km` `--max-km` |
+| Kasa Tipi | `--body` |
+| Motor Gücü | `--power` |
+| Motor Hacmi | `--engine` |
+| Çekiş | `--drive` |
+| Renk | `--color` |
+| Garanti | `--warranty` |
+| Ağır Hasar Kayıtlı | `--heavy-damage` |
+| Plaka / Uyruk | `--plate` |
+| Kimden | `--seller` |
+| Takaslı | `--tradeable` |
+| İlan Tarihi | `--listed-within` |
+| Fotoğraf, Video | `--has-video` `--has-clip` |
+| Boya, Değişen Parça | `--unpainted` `--unchanged` (`--undamaged` = both) |
+| Kelime ile filtrele | `--keyword` `--keyword-in-description` |
 
 Values accept English or Turkish, partial or full: `--fuel diesel` and
 `--fuel Dizel` both give `a17=22`; `--heavy-damage no` gives `a116445=1263354`.
@@ -76,10 +94,57 @@ An unrecognised value is an error listing the valid ones, never a dropped
 filter — a filter silently ignored would return a confident answer about a
 market you did not ask for.
 
-The attribute ids are harvested from sahibinden's own facet links, not guessed.
-Faceted search hides the filter you already have applied, so values that were
-active on a captured page are recovered from the applied-filter chips (each
-chip's link removes exactly one parameter, which identifies it).
+**Checkboxes repeat, radios do not.** Where sahibinden draws a checkbox list,
+the flag can be given more than once and the parameter repeats exactly as the
+site's own links do:
+
+```powershell
+sahibinden-cli search --brand Volkswagen --model Passat `
+    --fuel diesel --fuel hybrid --color white --color black
+```
+
+Where it draws radio buttons (`--seller`, `--listed-within`, `--tradeable`) a
+second value is an error rather than two parameters and a guess about which one
+the site will honour. `filters` marks each group `[repeatable]` or
+`[one value]`.
+
+`--currency` picks the unit `--min-price` / `--max-price` are read in, so
+`--currency usd --max-price 30000` is thirty thousand dollars. Listings the
+seller priced in a foreign currency keep that unit: the amount is stored, the
+lira column is left empty rather than filled with a number forty times too
+small, and both `search` and `price` say how many rows sit outside their lira
+figures.
+
+`--district` needs `--city`, since sahibinden addresses a district as part of
+its province (`/ankara-cankaya`). Like `--model` it is slugified and passed
+through — `total_results` is what confirms it matched.
+
+### Where the filter ids come from
+
+Nothing about the filters is written down in this repo. `harvest` reads them
+out of saved sahibinden pages — the attribute ids, every value, whether the
+group is a checkbox or a radio, the boolean switches and the currency ids —
+and merges them into `data/taxonomy.json`:
+
+```powershell
+sahibinden-cli harvest              # samples/ and data/raw/, no network
+sahibinden-cli harvest --dry-run    # what it would learn, without writing
+```
+
+The committed pages under `samples/` are enough to bootstrap a fresh clone, so
+the filters work before the first fetch. Run it again after a sweep to pick up
+values that page happened to expose.
+
+Guessing is not the fallback, because a wrong id is not an error: sahibinden
+answers HTTP 200 with a filtered-looking page for an attribute id that belongs
+to something else, so an invented id returns confidently wrong numbers.
+Faceted search also hides the filter you already have applied, so values that
+were active on a captured page are recovered from the applied-filter chips
+(each chip's link removes exactly one parameter, which identifies it).
+
+Anything a category has no harvested id for is applied to the parsed rows
+instead and reported as `post_filters`, so a caller never silently gets a wider
+market than it asked for.
 
 ### Narrowing is yours to do
 
@@ -119,6 +184,7 @@ sahibinden-cli config --set default_pages=10
 | `reparse` | no | re-run parsers over saved HTML |
 | `status` | no | budget, cooldown, database stats (`-v` lists what is recorded) |
 | `sql` | no | read-only SQL against the local database |
+| `harvest` | no | rebuild the filter vocabulary from saved HTML |
 | `brands` / `cities` | no | what the resolver accepts |
 | `config` | no | show or persist settings |
 | `capabilities` | no | full JSON description of every command |

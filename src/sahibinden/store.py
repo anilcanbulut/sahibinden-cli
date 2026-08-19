@@ -111,6 +111,11 @@ MIGRATIONS = [
     "ALTER TABLE listings ADD COLUMN model TEXT",
     "CREATE INDEX IF NOT EXISTS ix_listings_yearkm ON listings(year, km)",
     "CREATE INDEX IF NOT EXISTS ix_listings_brand ON listings(brand, model)",
+    # Sellers can price in USD/EUR/GBP. last_price_try holds lira only, so the
+    # unit has to be recorded to tell "no price yet" apart from "priced in
+    # euros"; last_price_amount keeps the number either way.
+    "ALTER TABLE listings ADD COLUMN price_currency TEXT",
+    "ALTER TABLE listings ADD COLUMN last_price_amount INTEGER",
 ]
 
 
@@ -259,15 +264,15 @@ class Store:
                     "INSERT INTO listings (listing_id, url, title, trim, layout, city,"
                     " district, store_name, store_url, listed_date, attributes,"
                     " last_price_try, first_seen_at, last_seen_at, year, km,"
-                    " brand, model)"
-                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    " brand, model, price_currency, last_price_amount)"
+                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (listing_id, row.get("url"), row.get("title"), row.get("trim"),
                      result.get("layout", "vehicle"), row.get("city"), row.get("district"),
                      row.get("store_name"), row.get("store_url"), row.get("listed_date"),
                      _json(row.get("attributes")), price, now, now,
                      _as_int((row.get("attributes") or {}).get("year")),
                      _as_int((row.get("attributes") or {}).get("km")),
-                     brand, model),
+                     brand, model, row.get("price_currency"), row.get("price_amount")),
                 )
                 if price:
                     self._add_price(listing_id, price, now, run_id)
@@ -280,13 +285,16 @@ class Store:
                     " url=COALESCE(?,url), title=COALESCE(?,title),"
                     " attributes=COALESCE(?,attributes),"
                     " year=COALESCE(?,year), km=COALESCE(?,km),"
-                    " brand=COALESCE(brand,?), model=COALESCE(model,?)"
+                    " brand=COALESCE(brand,?), model=COALESCE(model,?),"
+                    " price_currency=COALESCE(?,price_currency),"
+                    " last_price_amount=COALESCE(?,last_price_amount)"
                     " WHERE listing_id=?",
                     (now, row.get("url"), row.get("title"),
                      _json(row.get("attributes")),
                      _as_int((row.get("attributes") or {}).get("year")),
                      _as_int((row.get("attributes") or {}).get("km")),
-                     brand, model, listing_id),
+                     brand, model, row.get("price_currency"), row.get("price_amount"),
+                     listing_id),
                 )
                 if price and price != existing["last_price_try"]:
                     price_changes.append(
@@ -486,19 +494,24 @@ class Store:
             if value is not None:
                 sql += clause
                 params.append(value)
-        sql += " ORDER BY l.last_price_try ASC LIMIT ?"
+        # NULLs sort first in SQLite, so without the guard a listing with no
+        # lira price — one the seller quoted in euros, say — would lead a queue
+        # that is supposed to be cheapest-first. Unknown is not cheap: those go
+        # last.
+        sql += (" ORDER BY l.last_price_try IS NULL, l.last_price_try ASC"
+                " LIMIT ?")
         params.append(limit)
         return self.db.execute(sql, params).fetchall()
 
     def market(self, *, brand=None, model=None, min_year=None, max_year=None,
-               max_km=None, city=None, exclude_damaged=False,
-               include_delisted=False) -> dict:
+               min_km=None, max_km=None, city=None, district=None,
+               exclude_damaged=False, include_delisted=False) -> dict:
         """Aggregate stored listings into an answer, not a row dump.
 
         Returned to an agent, so it is deliberately small: percentiles rather
         than every price, and the damage split rather than every diagram.
         """
-        where, params = ["last_price_try IS NOT NULL"], []
+        where, params = [], []
         if brand:
             where.append("LOWER(brand) = LOWER(?)"); params.append(brand)
         if model:
@@ -507,10 +520,14 @@ class Store:
             where.append("year >= ?"); params.append(min_year)
         if max_year:
             where.append("year <= ?"); params.append(max_year)
+        if min_km:
+            where.append("km >= ?"); params.append(min_km)
         if max_km:
             where.append("km <= ?"); params.append(max_km)
         if city:
             where.append("LOWER(city) = LOWER(?)"); params.append(city)
+        if district:
+            where.append("LOWER(district) = LOWER(?)"); params.append(district)
         if not include_delisted:
             where.append("delisted_at IS NULL")
         if exclude_damaged:
@@ -521,13 +538,25 @@ class Store:
                 " WHERE heavy_damage_record = 'hayir'"
                 "   AND COALESCE(changed_count,0) = 0)"
             )
-        clause = " AND ".join(where)
+        clause = " AND ".join(where or ["1=1"])
 
         rows = self.db.execute(
             f"SELECT l.*, d.heavy_damage_record, d.changed_count, d.painted_count"
             f" FROM listings l LEFT JOIN listing_details d"
             f" ON d.listing_id = l.listing_id WHERE {clause}"
+            f" AND l.last_price_try IS NOT NULL"
             f" ORDER BY l.last_price_try", params,
+        ).fetchall()
+
+        # Listings the seller priced in USD, EUR or GBP match the query but
+        # cannot join a lira percentile, and converting them at a rate we do
+        # not have would be worse. They are counted and reported instead, so
+        # the percentiles are never quietly computed over part of the scope.
+        other_currency = self.db.execute(
+            f"SELECT price_currency AS unit, COUNT(*) AS n FROM listings l"
+            f" WHERE {clause} AND l.last_price_try IS NULL"
+            f"   AND l.price_currency IS NOT NULL"
+            f" GROUP BY price_currency", params,
         ).fetchall()
 
         prices = [r["last_price_try"] for r in rows]
@@ -548,6 +577,7 @@ class Store:
 
         return {
             "matched": len(rows),
+            "priced_in_other_currency": {r["unit"]: r["n"] for r in other_currency},
             "price": {
                 "min": pct(0), "p25": pct(0.25), "median": pct(0.5),
                 "p75": pct(0.75), "max": pct(1.0),

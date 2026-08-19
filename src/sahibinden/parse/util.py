@@ -40,6 +40,28 @@ def parse_turkish_date(value: str | None) -> str | None:
         return None
 
 
+#: How sahibinden writes each currency next to a price. Listings are priced
+#: in whichever the seller chose, so the suffix is the only thing that says
+#: which — and reading "35.000 USD" as lira would understate the car by a
+#: factor of forty.
+CURRENCY_MARKERS = {
+    "TL": "TL", "₺": "TL", "TRY": "TL",
+    "USD": "USD", "$": "USD",
+    "EUR": "EUR", "€": "EUR",
+    "GBP": "GBP", "£": "GBP",
+}
+
+
+def parse_price(value: str | None) -> tuple[int | None, str | None]:
+    """'850.000 TL' -> (850000, 'TL'). Unmarked prices report no currency."""
+    if not value:
+        return None, None
+    upper = value.upper()
+    currency = next((code for marker, code in CURRENCY_MARKERS.items()
+                     if marker in upper), None)
+    return parse_turkish_number(value), currency
+
+
 def parse_turkish_number(value: str | None) -> int | None:
     """'159.000' or '850.000 TL' -> int. Thousands separator is '.' in tr-TR."""
     if not value:

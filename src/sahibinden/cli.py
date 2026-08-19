@@ -24,12 +24,17 @@ from pathlib import Path
 from .config import CONFIG_PATH, Config, config, set_config
 from .crawl import fetch_details, sweep
 from .parse.detail import parse_detail
-from .fetch.fetcher import BREAKER_PATH
+from .fetch.fetcher import BREAKER_PATH, RAW_DIR
 from .fetch.guard import Breaker
 from .store import Store
-from .taxonomy import ENUM_FLAGS, Taxonomy, apply_post_filters
+from .taxonomy import (CURRENCY_PARAM, ENUM_FLAGS, FLAG_FILTERS, Taxonomy,
+                       apply_post_filters)
 
 EXIT_OK, EXIT_ERROR, EXIT_REFUSED = 0, 1, 2
+
+#: Committed pages the filter vocabulary can be rebuilt from with no
+#: network at all, so a fresh clone is not blind until its first sweep.
+SAMPLES_DIR = Path(__file__).resolve().parents[2] / "samples"
 
 
 def emit(data: dict, as_json: bool, human) -> None:
@@ -41,6 +46,26 @@ def emit(data: dict, as_json: bool, human) -> None:
 
 def _money(value) -> str:
     return f"{value:,} TL" if isinstance(value, int) else "-"
+
+
+def print_resolve_error(resolved: dict, as_json: bool) -> None:
+    """Report a refused filter with the values that would have worked.
+
+    A resolver failure is the one place the tool is most useful out loud: the
+    alternative to naming the valid values is a caller retrying blind, or
+    worse, dropping the filter and reading a market summary for a query it
+    never made.
+    """
+    if as_json:
+        print(json.dumps(resolved, ensure_ascii=False, indent=2), file=sys.stderr)
+        return
+    print(f"error: {resolved['error']}", file=sys.stderr)
+    if resolved.get("did_you_mean"):
+        print(f"did you mean: {', '.join(resolved['did_you_mean'])}", file=sys.stderr)
+    if resolved.get("options"):
+        print(f"valid values: {', '.join(map(str, resolved['options']))}", file=sys.stderr)
+    if resolved.get("hint"):
+        print(f"hint: {resolved['hint']}", file=sys.stderr)
 
 
 # --------------------------------------------------------------- commands
@@ -57,18 +82,18 @@ def cmd_search(args) -> int:
             print("error: need --brand (or --url). See: sahibinden brands", file=sys.stderr)
             return EXIT_ERROR
         resolved = tax.build_url(
-            args.brand, args.model, city=args.city,
-            min_year=args.min_year, max_year=args.max_year, max_km=args.max_km,
+            args.brand, args.model, city=args.city, district=args.district,
+            min_year=args.min_year, max_year=args.max_year,
+            min_km=args.min_km, max_km=args.max_km,
             min_price=args.min_price, max_price=args.max_price,
+            currency=args.currency, keyword=args.keyword,
+            keyword_in_description=args.keyword_in_description,
             undamaged_only=args.undamaged, sort=args.sort,
+            flags={name: getattr(args, name, False) for name in FLAG_FILTERS},
             enums={flag: getattr(args, flag, None) for flag in ENUM_FLAGS},
         )
         if resolved.get("error"):
-            print(json.dumps(resolved, ensure_ascii=False, indent=2)
-                  if args.json else
-                  f"error: {resolved['error']}\ndid you mean: "
-                  f"{', '.join(resolved.get('did_you_mean') or []) or '(no close match)'}",
-                  file=sys.stderr)
+            print_resolve_error(resolved, args.json)
             return EXIT_ERROR
         url, post = resolved["url"], resolved["post_filters"]
 
@@ -103,8 +128,18 @@ def cmd_search(args) -> int:
     result["stored"] = stored
 
     prices = [x["price_try"] for x in matched if x["price_try"]]
+    # Sellers may price in USD, EUR or GBP. Those rows are counted but kept out
+    # of the lira statistics rather than converted at a rate we do not have —
+    # and said out loud, so a median is never quietly a median of a subset.
+    other_currencies: dict[str, int] = {}
+    for row in matched:
+        unit = row.get("price_currency")
+        if unit and unit != "TL":
+            other_currencies[unit] = other_currencies.get(unit, 0) + 1
     result["summary"] = {
         "matched": len(matched),
+        "priced_in_lira": len(prices),
+        "other_currencies": other_currencies,
         "min_price": min(prices) if prices else None,
         "max_price": max(prices) if prices else None,
         "median_price": int(statistics.median(prices)) if prices else None,
@@ -116,6 +151,9 @@ def cmd_search(args) -> int:
         if r.get("model_is_guess"):
             print(f"  model slug     : guessed from {r['model']!r}; "
                   f"{'confirmed by results' if d['total_results'] else 'NO RESULTS — check spelling'}")
+        if r.get("district_is_guess"):
+            print(f"  district slug  : guessed from {r['district']!r}; "
+                  f"{'confirmed by results' if d['total_results'] else 'NO RESULTS — check spelling'}")
         print(f"  total on site  : {d['total_results']}")
         print(f"  pages fetched  : {d['pages_fetched']} of {d['pages_available']}")
         if (d.get("pages_available") or 0) > (d.get("pages_fetched") or 0):
@@ -124,9 +162,20 @@ def cmd_search(args) -> int:
                   f"of {d['total_results']} by {args.sort}, not the whole market.")
             print(f"                   Narrow with --min-price/--max-price/"
                   f"--min-year/--max-km/--city, or raise --pages.")
-        if r.get("filters_applied"):
-            for group, label in r["filters_applied"].items():
-                print(f"  {group:<15}: {label}")
+        for group, labels in (r.get("filters_applied") or {}).items():
+            shown = ", ".join(labels) if isinstance(labels, list) else labels
+            print(f"  {group:<15}: {shown}")
+        if r.get("flags_applied"):
+            print(f"  {'flags':<15}: {', '.join(r['flags_applied'])}")
+        if r.get("currency"):
+            print(f"  {'price unit':<15}: {r['currency']} "
+                  f"(--min-price/--max-price are read in this currency)")
+        if r.get("keyword"):
+            print(f"  {'keyword':<15}: {r['keyword']}")
+        for param in r.get("unverified_flags") or []:
+            print(f"  NOTE           : {param} is not in the harvested filter "
+                  f"list for this category; run 'sahibinden-cli harvest' if the "
+                  f"result looks unfiltered.")
         if d["post_filters_applied"]:
             print(f"  post-filters   : {d['post_filters_applied']} "
                   f"(applied to rows; sahibinden cannot filter these in-URL)")
@@ -135,6 +184,10 @@ def cmd_search(args) -> int:
         if s["median_price"]:
             print(f"  price range    : {_money(s['min_price'])} - {_money(s['max_price'])}")
             print(f"  median         : {_money(s['median_price'])}")
+        if s.get("other_currencies"):
+            listed = ", ".join(f"{n} in {unit}" for unit, n in s["other_currencies"].items())
+            print(f"  NOTE           : {listed} — priced by the seller in that "
+                  f"currency, so out of the lira figures above.")
         if d.get("stored"):
             st = d["stored"]
             print(f"  stored         : {st['new']} new, "
@@ -145,8 +198,12 @@ def cmd_search(args) -> int:
         print("  " + "-" * 62)
         for x in d["listings"][:args.limit]:
             a = x.get("attributes") or {}
+            # Foreign-currency rows keep their own unit rather than being shown
+            # as 0 (price_try) or silently as lira.
+            shown = (f"{x['price_try']:,}" if x.get("price_try") is not None
+                     else (x.get("price_raw") or "-"))
             print(f"  {x['listing_id']:<12}{a.get('year',''):<6}{a.get('km',''):<10}"
-                  f"{x['price_try'] or 0:>12,}  {x.get('city') or ''} {x.get('district') or ''}")
+                  f"{shown:>12}  {x.get('city') or ''} {x.get('district') or ''}")
         if len(d["listings"]) > args.limit:
             print(f"  ... {len(d['listings']) - args.limit} more (use --limit)")
 
@@ -433,8 +490,10 @@ def cmd_price(args) -> int:
     with Store(config.db_path) as store:
         data = store.market(
             brand=brand, model=args.model,
-            min_year=args.min_year, max_year=args.max_year, max_km=args.max_km,
-            city=city, exclude_damaged=args.clean_only,
+            min_year=args.min_year, max_year=args.max_year,
+            min_km=args.min_km, max_km=args.max_km,
+            city=city, district=args.district,
+            exclude_damaged=args.clean_only,
             include_delisted=args.include_delisted,
         )
     data["query"] = {k: v for k, v in vars(args).items()
@@ -447,6 +506,11 @@ def cmd_price(args) -> int:
             return
         p_ = d["price"]
         print(f"\n  matched      : {d['matched']} listings")
+        if d.get("priced_in_other_currency"):
+            listed = ", ".join(f"{n} in {unit}"
+                               for unit, n in d["priced_in_other_currency"].items())
+            print(f"  not counted  : {listed} — seller priced them in that "
+                  f"currency, so they are outside these lira figures")
         print(f"  price        : min {_money(p_['min'])}   p25 {_money(p_['p25'])}   "
               f"median {_money(p_['median'])}   p75 {_money(p_['p75'])}   "
               f"max {_money(p_['max'])}")
@@ -635,8 +699,19 @@ def cmd_filters(args) -> int:
         spec = tax.enums.get(group)
         if spec:
             groups[flag] = {"group": group, "param": spec["param"],
+                            "multi": bool(spec.get("multi")),
                             "options": sorted(spec["options"])}
-    data = {"ranges": tax.filters, "enums": groups}
+    flags = {}
+    for name, param in FLAG_FILTERS.items():
+        flags[name] = {"param": param, "label": tax.flag_label(param),
+                       "harvested": tax.flag_label(param) is not None}
+    data = {"ranges": tax.filters, "enums": groups, "flags": flags,
+            "units": tax.units,
+            "text": {"keyword": "--keyword (query_text)",
+                     "keyword_in_description": "--keyword-in-description (query_desc)"},
+            "location": {"city": "il — matched against sahibinden's own list",
+                         "district": "ilce — slug passed through, verified by "
+                                     "whether the search returns anything"}}
 
     def human(d):
         print("\n  numeric ranges")
@@ -644,12 +719,113 @@ def cmd_filters(args) -> int:
             bounds = (f"  ({spec['min']}-{spec['max']})"
                       if spec.get("min") or spec.get("max") else "")
             print(f"    {label:<10} {spec['param']}_min / {spec['param']}_max{bounds}")
+        units = d["units"].get("price_currency")
+        if units:
+            print(f"    {'currency':<10} --currency {'/'.join(sorted(units))}"
+                  f"  (reads --min-price/--max-price in that unit)")
         print("\n  choices")
         for flag, spec in d["enums"].items():
             opts = ", ".join(spec["options"][:6])
             more = f"  (+{len(spec['options'])-6} more)" if len(spec["options"]) > 6 else ""
-            print(f"    --{flag.replace('_','-'):<15} {spec['group']}")
+            takes = "repeatable" if spec["multi"] else "one value"
+            print(f"    --{flag.replace('_','-'):<15} {spec['group']}  [{takes}]")
             print(f"      {opts}{more}")
+        print("\n  switches")
+        for name, spec in d["flags"].items():
+            note = spec["label"] or f"{spec['param']} (not in the harvest yet)"
+            print(f"    --{name.replace('_','-'):<15} {note}")
+        print(f"    {'--undamaged':<17} both paint switches at once")
+        print("\n  location")
+        for name, note in d["location"].items():
+            print(f"    --{name:<15} {note}")
+        print("\n  free text")
+        print(f"    {'--keyword TEXT':<17} Kelime ile filtrele")
+        print("    --keyword-in-description")
+        print(f"    {'':<17} also match --keyword inside ad descriptions")
+
+    emit(data, args.json, human)
+    return EXIT_OK
+
+
+def cmd_harvest(args) -> int:
+    """Rebuild the filter vocabulary from saved HTML. No network, no budget.
+
+    Every filter the CLI can apply is read out of sahibinden's own sidebar
+    rather than written down here: the attribute ids are category-specific and
+    opaque, and an id that belongs to a different attribute still returns HTTP
+    200 and a filtered-looking page. So a wrong guess produces confidently
+    wrong numbers instead of an error, and guessing is never worth it.
+
+    Search pages are the source — a detail page carries the brand and province
+    dropdowns but no facets, so both are scanned and merged.
+    """
+    tax = Taxonomy()
+    sources = [Path(x) for x in (args.path or [])] or [SAMPLES_DIR, RAW_DIR]
+
+    files: list[Path] = []
+    for source in sources:
+        if source.is_dir():
+            files.extend(sorted(source.glob("*.html")))
+        elif source.exists():
+            files.append(source)
+
+    totals = {"brands": 0, "cities": 0, "filters": 0, "enums": 0,
+              "flags": 0, "units": 0}
+    scanned, failed = 0, []
+    for path in files:
+        try:
+            found = Taxonomy.extract(path.read_text(encoding="utf-8", errors="replace"))
+        except Exception as exc:
+            failed.append({"file": str(path), "error": f"{type(exc).__name__}: {exc}"})
+            continue
+        for key, count in tax.merge(found).items():
+            totals[key] += count
+        scanned += 1
+
+    if not args.dry_run:
+        tax.save()
+
+    data = {
+        "scanned": scanned,
+        "sources": [str(x) for x in sources],
+        "added": totals,
+        "failed": failed,
+        "saved_to": None if args.dry_run else str(tax.path),
+        "vocabulary": {
+            "brands": len(tax.brands),
+            "cities": len(tax.cities),
+            "ranges": sorted(tax.filters),
+            "enum_groups": {g: {"param": spec["param"],
+                                "values": len(spec["options"]),
+                                "multi": bool(spec.get("multi"))}
+                            for g, spec in sorted(tax.enums.items())},
+            "flag_groups": tax.flags,
+            "units": tax.units,
+        },
+    }
+
+    def human(d):
+        print(f"\n  scanned {d['scanned']} page(s) from "
+              f"{', '.join(d['sources'])}")
+        print("  added      : " + ", ".join(f"{k}={v}" for k, v in d["added"].items()))
+        v = d["vocabulary"]
+        print(f"  brands {v['brands']}, cities {v['cities']}, "
+              f"ranges {', '.join(v['ranges']) or '-'}")
+        print("\n  filter groups")
+        for group, spec in v["enum_groups"].items():
+            print(f"    {group:<24}{spec['param']:<10}{spec['values']:>3} values"
+                  f"   {'checkbox (repeatable)' if spec['multi'] else 'single choice'}")
+        for group, options in v["flag_groups"].items():
+            print(f"    {group:<24}{'switches':<10}"
+                  f"   {', '.join(f'{k} -> {p}' for k, p in options.items())}")
+        for param, options in v["units"].items():
+            print(f"    {param:<24}{'units':<10}   {', '.join(sorted(options))}")
+        for f in d["failed"]:
+            print(f"  FAILED {f['file']}: {f['error']}")
+        if d["saved_to"]:
+            print(f"\n  saved to {d['saved_to']}\n")
+        else:
+            print("\n  dry run — nothing written\n")
 
     emit(data, args.json, human)
     return EXIT_OK
@@ -682,9 +858,15 @@ def cmd_capabilities(args) -> int:
                        "2": "refused — budget spent or cooling down; wait, do not retry"},
         "notes": [
             "Pass --json on any command for stable machine-readable output.",
-            "Year and km filters are applied to results, not the URL: sahibinden "
-            "filters those by category-specific attribute ids that cannot be "
-            "derived, and an invented parameter is silently ignored.",
+            "Filters are applied in the URL using ids harvested from "
+            "sahibinden's own sidebar ('harvest'); anything not harvested for "
+            "the current category falls back to filtering the parsed rows and "
+            "is reported as post_filters, so a caller never silently gets a "
+            "wider market than it asked for.",
+            "Choice filters that sahibinden draws as checkboxes are repeatable "
+            "(--fuel diesel --fuel hybrid); the ones it draws as radios "
+            "(--seller, --listed-within) refuse a second value. 'filters' says "
+            "which is which.",
             "Requests are budgeted per day and paced; a refused call means wait.",
         ],
         "commands": commands,
@@ -738,43 +920,61 @@ def build_parser() -> argparse.ArgumentParser:
                        formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     p.add_argument("--brand", help="e.g. Volkswagen (fuzzy-matched; see 'brands')")
     p.add_argument("--model", help="e.g. Golf (slug is guessed, verified by results)")
-    p.add_argument("--city", help="e.g. Ankara (see 'cities')")
+    p.add_argument("--city", help="il — e.g. Ankara (see 'cities')")
+    p.add_argument("--district", help="ilce — e.g. Cankaya; needs --city. Slug is "
+                                      "guessed, verified by results")
     p.add_argument("--url", help="explicit sahibinden search URL, bypassing the resolver")
-    p.add_argument("--min-year", type=int, help="applied to results, not the URL")
-    p.add_argument("--max-year", type=int, help="applied to results, not the URL")
-    p.add_argument("--max-km", type=int, help="applied to results, not the URL")
+    p.add_argument("--min-year", type=int, help="applied in the URL")
+    p.add_argument("--max-year", type=int, help="applied in the URL")
+    p.add_argument("--min-km", type=int, help="applied in the URL")
+    p.add_argument("--max-km", type=int, help="applied in the URL")
     p.add_argument("--min-price", type=int, help="applied in the URL")
     p.add_argument("--max-price", type=int, help="applied in the URL")
-    p.add_argument("--fuel", dest="fuel",
-                   help="Benzin/Dizel/hybrid")
-    p.add_argument("--transmission", dest="transmission",
-                   help="automatic/manual")
-    p.add_argument("--condition", dest="condition",
-                   help="used/new/imported")
-    p.add_argument("--body", dest="body",
-                   help="sedan/hatchback-5-kapi/...")
-    p.add_argument("--power", dest="power",
-                   help="HP band, e.g. '101 - 125 HP'")
-    p.add_argument("--engine", dest="engine",
-                   help="cm3 band")
-    p.add_argument("--drive", dest="drive",
-                   help="fwd/rwd/4WD")
-    p.add_argument("--color", dest="color",
-                   help="white/black/...")
-    p.add_argument("--warranty", dest="warranty",
-                   help="yes/no")
-    p.add_argument("--heavy-damage", dest="heavy_damage",
-                   help="yes/no — agir hasar kayitli")
-    p.add_argument("--plate", dest="plate",
-                   help="plate nationality")
-    p.add_argument("--seller", dest="seller",
-                   help="owner/dealer/authorised")
-    p.add_argument("--tradeable", dest="tradeable",
-                   help="yes/no")
-    p.add_argument("--listed-within", dest="listed_within",
-                   help="e.g. 'Son 3 gun icinde'")
+    p.add_argument("--currency", help="TL/USD/EUR/GBP — the unit --min-price and "
+                                      "--max-price are read in (default TL)")
+    # Repeatable, because sahibinden's own sidebar draws most of these as
+    # checkbox lists: --fuel diesel --fuel hybrid is two boxes ticked, one
+    # search. The groups it draws as radios (Kimden, İlan Tarihi) reject a
+    # second value rather than quietly sending two.
+    p.add_argument("--fuel", dest="fuel", action="append", metavar="VALUE",
+                   help="Benzin/Dizel/hybrid (repeatable)")
+    p.add_argument("--transmission", dest="transmission", action="append",
+                   metavar="VALUE", help="automatic/manual (repeatable)")
+    p.add_argument("--condition", dest="condition", action="append",
+                   metavar="VALUE", help="used/new/imported (repeatable)")
+    p.add_argument("--body", dest="body", action="append", metavar="VALUE",
+                   help="sedan/hatchback-5-kapi/... (repeatable)")
+    p.add_argument("--power", dest="power", action="append", metavar="VALUE",
+                   help="HP band, e.g. '101 - 125 HP' (repeatable)")
+    p.add_argument("--engine", dest="engine", action="append", metavar="VALUE",
+                   help="cm3 band (repeatable)")
+    p.add_argument("--drive", dest="drive", action="append", metavar="VALUE",
+                   help="fwd/rwd/4WD (repeatable)")
+    p.add_argument("--color", dest="color", action="append", metavar="VALUE",
+                   help="white/black/... (repeatable)")
+    p.add_argument("--warranty", dest="warranty", action="append", metavar="VALUE",
+                   help="yes/no (repeatable)")
+    p.add_argument("--heavy-damage", dest="heavy_damage", action="append",
+                   metavar="VALUE", help="yes/no — agir hasar kayitli (repeatable)")
+    p.add_argument("--plate", dest="plate", action="append", metavar="VALUE",
+                   help="plate nationality (repeatable)")
+    p.add_argument("--seller", dest="seller", action="append", metavar="VALUE",
+                   help="owner/dealer/authorised (one value)")
+    p.add_argument("--tradeable", dest="tradeable", action="append", metavar="VALUE",
+                   help="yes/no (repeatable)")
+    p.add_argument("--listed-within", dest="listed_within", action="append",
+                   metavar="VALUE", help="e.g. 'Son 3 gun icinde' (one value)")
     p.add_argument("--undamaged", action="store_true",
-                   help="only unpainted/unchanged parts (sahibinden-side filter)")
+                   help="both paint switches: unpainted and unchanged")
+    p.add_argument("--unpainted", action="store_true",
+                   help="Boyasiz — no painted panel")
+    p.add_argument("--unchanged", action="store_true",
+                   help="Degisensiz — no replaced panel")
+    p.add_argument("--has-video", action="store_true", help="Videolu ilanlar")
+    p.add_argument("--has-clip", action="store_true", help="Klipli ilanlar")
+    p.add_argument("--keyword", help="Kelime ile filtrele — free text over titles")
+    p.add_argument("--keyword-in-description", action="store_true",
+                   help="also match --keyword inside ad descriptions")
     p.add_argument("--sort", default="price_asc",
                    choices=["price_asc", "price_desc", "date_desc", "date_asc"])
     p.add_argument("--pages", type=int,
@@ -856,8 +1056,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--brand")
     p.add_argument("--model")
     p.add_argument("--city")
+    p.add_argument("--district")
     p.add_argument("--min-year", type=int)
     p.add_argument("--max-year", type=int)
+    p.add_argument("--min-km", type=int)
     p.add_argument("--max-km", type=int)
     p.add_argument("--clean-only", action="store_true",
                    help="only listings checked and found without heavy damage "
@@ -900,6 +1102,19 @@ def build_parser() -> argparse.ArgumentParser:
                                    "Use after a parser fix to backfill fields "
                                    "without spending requests.")
     p.set_defaults(func=cmd_reparse)
+
+    p = sub.add_parser("harvest", parents=[shared],
+                       help="rebuild the filter vocabulary from saved HTML",
+                       description="Read brands, provinces, ranges and every "
+                                   "sidebar filter out of saved sahibinden pages "
+                                   "and merge them into data/taxonomy.json. No "
+                                   "network. Run it after a sweep to pick up "
+                                   "filter values that page happened to expose.")
+    p.add_argument("path", nargs="*",
+                   help="HTML files or directories (default: samples/ and data/raw/)")
+    p.add_argument("--dry-run", action="store_true",
+                   help="report what would be learned without writing")
+    p.set_defaults(func=cmd_harvest)
 
     p = sub.add_parser("capabilities", parents=[shared], help="machine-readable command description",
                        description="Dump every command and argument as JSON, for "

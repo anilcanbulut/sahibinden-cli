@@ -92,6 +92,19 @@ def main() -> int:
         check("detail stored", s.stats()["with_details"], 1)
         check("queue shrinks", len(s.needs_detail(limit=10)), 1)
 
+        # A car the seller priced in euros has no lira price, and SQLite sorts
+        # NULL first — so without a guard it would head a queue that is meant
+        # to be cheapest-first and spend the budget on an unknown.
+        # Partial on purpose: a complete sweep listing only C would delist the
+        # others and take the later checks with it.
+        s.record_sweep(sweep([listing("C", None, price_currency="EUR",
+                                      price_amount=25_000)],
+                             fetched=1, available=2))
+        queue = s.needs_detail(limit=10)
+        check("euro-priced listing is queued", {r["listing_id"] for r in queue},
+              {"A", "C"})
+        check("but not ahead of a priced one", queue[0]["listing_id"], "A")
+
         print("\n8. different search must not cross-delist")
         s.record_sweep(sweep([listing("Z", 500_000)], fetched=1, available=1,
                              base_url="https://www.sahibinden.com/vw-golf"))

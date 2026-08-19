@@ -16,7 +16,7 @@ import re
 
 from bs4 import BeautifulSoup
 
-from .util import parse_turkish_date, parse_turkish_number, text
+from .util import parse_price, parse_turkish_date, parse_turkish_number, text
 
 BASE_URL = "https://www.sahibinden.com"
 
@@ -64,13 +64,22 @@ def parse_row(row, layout: str = "vehicle") -> dict | None:
     attrs = [text(td) for td in row.select("td.searchResultsAttributeValue")]
     named = dict(zip(COLUMN_LAYOUTS.get(layout, ()), attrs))
 
+    # Sellers may price in USD, EUR or GBP, and the sidebar's currency tab
+    # makes those rows easy to ask for. The amount is kept whatever the unit,
+    # but price_try stays empty unless the row really is in lira: a foreign
+    # price stored in the lira column would poison every median downstream.
+    price_raw = text(row.select_one("td.searchResultsPriceValue"))
+    price_amount, price_currency = parse_price(price_raw)
+
     return {
         "listing_id": listing_id,
         "url": url,
         "title": text(row.select_one("td.searchResultsTitleValue")),
         "trim": text(row.select_one("td.searchResultsTagAttributeValue")) or None,
-        "price_try": parse_turkish_number(text(row.select_one("td.searchResultsPriceValue"))),
-        "price_raw": text(row.select_one("td.searchResultsPriceValue")) or None,
+        "price_try": price_amount if price_currency in (None, "TL") else None,
+        "price_amount": price_amount,
+        "price_currency": price_currency,
+        "price_raw": price_raw or None,
         "listed_date": parse_turkish_date(date_raw),
         "listed_date_raw": date_raw or None,
         "city": location_bits[0] if location_bits else None,
