@@ -127,6 +127,16 @@ def _as_int(value) -> int | None:
     return int(digits) if digits else None
 
 
+def _panel_summary(damage: str | None) -> str:
+    """One-cell rendering of a stored diagram, '?' when there is none."""
+    from .panels import summarise
+
+    try:
+        return summarise(json.loads(damage) if damage else None)
+    except (TypeError, ValueError):
+        return "?"
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -505,11 +515,19 @@ class Store:
 
     def market(self, *, brand=None, model=None, min_year=None, max_year=None,
                min_km=None, max_km=None, city=None, district=None,
-               exclude_damaged=False, include_delisted=False) -> dict:
+               exclude_damaged=False, include_delisted=False,
+               panels=None, max_painted=None, max_changed=None,
+               limit=10) -> dict:
         """Aggregate stored listings into an answer, not a row dump.
 
         Returned to an agent, so it is deliberately small: percentiles rather
         than every price, and the damage split rather than every diagram.
+
+        ``panels`` narrows to cars whose diagram satisfies a per-panel
+        requirement ({"hood": {"original"}}). That lives in the detail record,
+        not the search row, so it can only speak for listings whose details
+        have been fetched: the rest come back counted as *unchecked* rather
+        than dropped silently or lumped in with the failures.
         """
         where, params = [], []
         if brand:
@@ -542,11 +560,38 @@ class Store:
 
         rows = self.db.execute(
             f"SELECT l.*, d.heavy_damage_record, d.changed_count, d.painted_count"
+            f", d.damage"
             f" FROM listings l LEFT JOIN listing_details d"
             f" ON d.listing_id = l.listing_id WHERE {clause}"
             f" AND l.last_price_try IS NOT NULL"
             f" ORDER BY l.last_price_try", params,
         ).fetchall()
+
+        panel_report = None
+        if panels or max_painted is not None or max_changed is not None:
+            from .panels import evaluate  # keeps the parser import lazy
+
+            kept, failed, unchecked = [], [], []
+            for row in rows:
+                try:
+                    parts = json.loads(row["damage"]) if row["damage"] else None
+                except (TypeError, ValueError):
+                    parts = None
+                verdict = evaluate(parts, panels or {}, max_painted=max_painted,
+                                   max_changed=max_changed)
+                {"pass": kept, "fail": failed, "unchecked": unchecked}[verdict].append(row)
+            rows = kept
+            panel_report = {
+                "requirements": {k: sorted(v) for k, v in (panels or {}).items()},
+                "max_painted": max_painted,
+                "max_changed": max_changed,
+                "passed": len(kept),
+                "failed": len(failed),
+                # The cars worth a detail request: they match everything else
+                # asked for, and only the diagram is missing.
+                "unchecked": len(unchecked),
+                "unchecked_ids": [r["listing_id"] for r in unchecked[:20]],
+            }
 
         # Listings the seller priced in USD, EUR or GBP match the query but
         # cannot join a lira percentile, and converting them at a rate we do
@@ -577,6 +622,7 @@ class Store:
 
         return {
             "matched": len(rows),
+            "panel_filter": panel_report,
             "priced_in_other_currency": {r["unit"]: r["n"] for r in other_currency},
             "price": {
                 "min": pct(0), "p25": pct(0.25), "median": pct(0.5),
@@ -599,7 +645,8 @@ class Store:
             "cheapest": [
                 {"listing_id": r["listing_id"], "price_try": r["last_price_try"],
                  "year": r["year"], "km": r["km"], "city": r["city"],
-                 "heavy_damage_record": r["heavy_damage_record"]}
-                for r in rows[:10]
+                 "heavy_damage_record": r["heavy_damage_record"],
+                 "panels": _panel_summary(r["damage"])}
+                for r in rows[:limit]
             ],
         }

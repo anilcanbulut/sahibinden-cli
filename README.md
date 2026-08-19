@@ -180,6 +180,7 @@ sahibinden-cli config --set default_pages=10
 | `nightly` | yes | refresh tracked searches (oldest first, capped), then spend detail budget |
 | `price` | no | price percentiles, damage split, turnover |
 | `listing` | no | full record: row, price history, damage, description |
+| `panels` | no | the 13-part diagram: panel names, groups, coverage |
 | `history` | no | price trail for one listing |
 | `reparse` | no | re-run parsers over saved HTML |
 | `status` | no | budget, cooldown, database stats (`-v` lists what is recorded) |
@@ -188,6 +189,64 @@ sahibinden-cli config --set default_pages=10
 | `brands` / `cities` | no | what the resolver accepts |
 | `config` | no | show or persist settings |
 | `capabilities` | no | full JSON description of every command |
+
+## Filtering on individual panels
+
+sahibinden's own paint filters are all-or-nothing: **Boyasız** means nothing
+painted anywhere, **Değişensiz** nothing replaced anywhere. That throws away the
+distinction that decides what a car is worth — a repainted rear bumper is a
+car-park scrape, a changed front fender is an accident.
+
+The diagram carries it per panel, so the CLI filters on it directly:
+
+```powershell
+# hood untouched, everything else as it comes
+sahibinden-cli price --brand Volkswagen --model Passat --original hood
+
+# the shape most people actually want: body original, bumpers may be painted
+sahibinden-cli price --brand Volkswagen --model Passat `
+    --original structural --not-changed bumpers
+
+# spelled out, panel by panel
+sahibinden-cli price --brand VW --panel roof=original `
+                     --panel front_left_door=original,local_painted
+
+# a tolerance instead of a rule
+sahibinden-cli price --brand VW --max-painted 2 --max-changed 0
+```
+
+| Flag | Means |
+|---|---|
+| `--original PANELS` | untouched — no paint of any kind |
+| `--not-painted PANELS` | local touch-up allowed, no full repaint |
+| `--not-changed PANELS` | paint allowed, panel not replaced |
+| `--panel PANEL=STATUS[,STATUS]` | the explicit form |
+| `--max-painted N` / `--max-changed N` | counts across the whole car |
+
+`PANELS` is one panel or a group: `hood` `kaput` `roof` `trunk` `front_left_door`
+… or `all` `structural` `bumpers` `doors` `fenders` `left` `right` `front` `rear`
+(Turkish names work too: `kapilar`, `camurluklar`, `sol`, `arka`). Statuses are
+`original` `local_painted` `painted` `changed` — or `orijinal`, `lokal`,
+`boyalı`, `değişen`. Two rules over the same panel keep the stricter one;
+contradictory ones are an error. `sahibinden-cli panels` lists everything,
+with how many stored cars each status appears on.
+
+### Unchecked is not clean
+
+Panel status lives on the **detail page**, one request per car — so it is only
+known for listings whose details have been fetched. A car with no diagram never
+passes a panel filter, and is never counted as failing one either:
+
+```
+  panel test   : 9 passed, 10 failed, 126 unchecked
+                 the unchecked ones match everything else asked for; their
+                 diagram is simply not fetched yet:
+                   sahibinden-cli details --brand Volkswagen --model passat
+```
+
+Those 126 are the cars worth spending detail requests on. Folding them into
+"failed" would hide them; folding them into "passed" would recommend cars nobody
+has looked at.
 
 ## Why damage needs three sources
 
@@ -278,6 +337,10 @@ market, and a full day's budget went on 1980s cars with broken gearboxes.
 sahibinden-cli details --brand Volkswagen --model Passat --min-year 2018 --max-km 200000
 sahibinden-cli details --listing-id 1331795270
 ```
+
+This is also what a panel filter runs on. A `price --original hood` over a scope
+whose details were never fetched reports every car as unchecked and matches
+nothing — the filter is not wrong, the diagrams are simply not there yet.
 
 ## Scheduled refresh
 

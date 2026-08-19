@@ -23,6 +23,8 @@ from pathlib import Path
 
 from .config import CONFIG_PATH, Config, config, set_config
 from .crawl import fetch_details, sweep
+from .panels import (PANEL_GROUPS, PANEL_LABELS, PANELS, STATUSES,
+                     build_requirements, describe)
 from .parse.detail import parse_detail
 from .fetch.fetcher import BREAKER_PATH, RAW_DIR
 from .fetch.guard import Breaker
@@ -208,6 +210,97 @@ def cmd_search(args) -> int:
             print(f"  ... {len(d['listings']) - args.limit} more (use --limit)")
 
     emit(result, args.json, human)
+    return EXIT_OK
+
+
+def detail_command(args) -> str:
+    """The `details` call that would fill the diagrams this scope is missing.
+
+    Printed rather than run: detail pages cost one request each and are
+    separately capped, so widening what gets fetched stays the caller's call.
+    """
+    parts = ["sahibinden-cli details"]
+    for flag, value in (("--brand", args.brand), ("--model", args.model),
+                        ("--min-year", args.min_year),
+                        ("--max-km", args.max_km)):
+        if value:
+            parts.append(f"{flag} {value}")
+    if len(parts) == 1:
+        return ("sahibinden-cli details --brand <brand> --model <model>"
+                "   # scope it, or a day of detail budget goes to the "
+                "cheapest cars in the database")
+    return " ".join(parts)
+
+
+def cmd_panels(args) -> int:
+    """The 13-part diagram: what can be filtered, and how much is known.
+
+    Coverage is the first question, not an afterthought: a panel filter can
+    only speak for listings whose detail page has been fetched, and this is
+    where that ratio is visible before a query is built on it.
+    """
+    with Store(config.db_path) as store:
+        rows = store.db.execute(
+            "SELECT l.listing_id, d.damage FROM listings l"
+            " LEFT JOIN listing_details d ON d.listing_id = l.listing_id"
+            " WHERE l.delisted_at IS NULL"
+        ).fetchall()
+
+    per_panel = {panel: {status: 0 for status in STATUSES} for panel in PANELS}
+    with_diagram = 0
+    for row in rows:
+        try:
+            parts = json.loads(row["damage"]) if row["damage"] else None
+        except (TypeError, ValueError):
+            parts = None
+        if not parts:
+            continue
+        with_diagram += 1
+        for panel, status in parts.items():
+            if panel in per_panel and status in per_panel[panel]:
+                per_panel[panel][status] += 1
+
+    data = {
+        "panels": [{"name": panel, "label": PANEL_LABELS.get(panel),
+                    "counts": per_panel[panel]} for panel in PANELS],
+        "groups": {name: members for name, members in PANEL_GROUPS.items()},
+        "statuses": list(STATUSES),
+        "coverage": {"active_listings": len(rows), "with_diagram": with_diagram,
+                     "without_diagram": len(rows) - with_diagram},
+    }
+
+    def human(d):
+        c = d["coverage"]
+        print(f"\n  diagrams stored: {c['with_diagram']} of {c['active_listings']} "
+              f"active listings ({c['without_diagram']} not fetched yet)")
+        print("  a panel filter can only speak for the fetched ones; the rest "
+              "come back\n  counted as unchecked, never as clean.\n")
+        print(f"  {'panel':<20}{'':<16}{'orij':>6}{'lokal':>7}{'boya':>6}"
+              f"{'değişen':>9}{'?':>4}")
+        print("  " + "-" * 68)
+        for panel in d["panels"]:
+            n = panel["counts"]
+            print(f"  {panel['name']:<20}{panel['label'] or '':<16}"
+                  f"{n['original']:>6}{n['local_painted']:>7}{n['painted']:>6}"
+                  f"{n['changed']:>9}{n['unknown']:>4}")
+        print("\n  groups (one argument instead of many)")
+        collapsed: dict[tuple, list[str]] = {}
+        for name, members in d["groups"].items():
+            collapsed.setdefault(tuple(members), []).append(name)
+        for members, names in collapsed.items():
+            label = " / ".join(names)
+            print(f"    {label:<22}{len(members):>3} panels: "
+                  f"{', '.join(members[:4])}{' ...' if len(members) > 4 else ''}")
+        print("\n  statuses: " + ", ".join(d["statuses"]))
+        print("\n  examples")
+        print("    sahibinden-cli price --brand VW --model Passat --original hood")
+        print("    sahibinden-cli price --brand VW --original structural "
+              "--not-changed bumpers")
+        print("    sahibinden-cli price --brand VW --panel roof=original "
+              "--panel front_left_door=original,local_painted")
+        print("    sahibinden-cli price --brand VW --max-painted 2 --max-changed 0\n")
+
+    emit(data, args.json, human)
     return EXIT_OK
 
 
@@ -487,6 +580,16 @@ def cmd_price(args) -> int:
             return EXIT_ERROR
         city = resolved_city
 
+    # Per-panel requirements are resolved before touching the database, so a
+    # typo in a panel name is an error rather than a market summary for a
+    # filter that quietly did nothing.
+    requirements, error = build_requirements(
+        panel=args.panel, original=args.original,
+        not_changed=args.not_changed, not_painted=args.not_painted)
+    if error:
+        print_resolve_error(error, args.json)
+        return EXIT_ERROR
+
     with Store(config.db_path) as store:
         data = store.market(
             brand=brand, model=args.model,
@@ -495,12 +598,32 @@ def cmd_price(args) -> int:
             city=city, district=args.district,
             exclude_damaged=args.clean_only,
             include_delisted=args.include_delisted,
+            panels=requirements, max_painted=args.max_painted,
+            max_changed=args.max_changed, limit=args.limit,
         )
+    data["panel_requirements"] = describe(requirements)
     data["query"] = {k: v for k, v in vars(args).items()
                      if k not in ("func", "json", "command") and v}
 
     def human(d):
+        pf = d.get("panel_filter")
+        for line in d.get("panel_requirements") or []:
+            print(f"  panel        : {line}")
+        if pf and (pf["max_painted"] is not None or pf["max_changed"] is not None):
+            caps = [f"at most {pf[k]} {k.split('_')[1]}"
+                    for k in ("max_painted", "max_changed") if pf[k] is not None]
+            print(f"  panel        : {', '.join(caps)} across the whole car")
         if not d["matched"]:
+            if pf and pf["unchecked"]:
+                # Nothing passed, but the diagram was missing for most of the
+                # scope — reporting "no matches" alone would read as "no such
+                # car exists", which is a different and much stronger claim.
+                print(f"  no match among the {pf['passed'] + pf['failed']} cars whose "
+                      f"diagram is stored ({pf['failed']} failed the panel test).")
+                print(f"  {pf['unchecked']} more match everything else but have no "
+                      f"diagram yet:")
+                print(f"    {detail_command(args)}")
+                return
             print("  no stored listings match. Run a search first:")
             print("    sahibinden-cli search --brand <brand> --model <model>")
             return
@@ -521,6 +644,13 @@ def cmd_price(args) -> int:
               f"({dm['heavy_damage_flagged']} heavy-damage flagged, "
               f"{dm['any_panel_changed']} with changed panels), "
               f"{dm['unchecked']} unchecked")
+        if pf:
+            print(f"  panel test   : {pf['passed']} passed, {pf['failed']} failed, "
+                  f"{pf['unchecked']} unchecked")
+            if pf["unchecked"]:
+                print(f"                 the unchecked ones match everything else "
+                      f"asked for; their diagram is simply not fetched yet:")
+                print(f"                   {detail_command(args)}")
         t_ = d["turnover"]
         if t_["avg_days_to_delist"]:
             print(f"  turnover     : {t_['delisted_observed']} delisted, "
@@ -529,12 +659,14 @@ def cmd_price(args) -> int:
             print(f"  turnover     : not enough history yet "
                   f"(needs repeated complete sweeps)")
         print("\n  cheapest matches:")
-        print(f"  {'id':<12}{'year':<6}{'km':>10}{'price':>12}  {'hasar':<7}city")
-        print("  " + "-" * 62)
+        print(f"  {'id':<12}{'year':<6}{'km':>10}{'price':>12}  {'hasar':<7}"
+              f"{'panels':<26}city")
+        print("  " + "-" * 88)
         for c in d["cheapest"]:
             flag = c["heavy_damage_record"] or "?"
             print(f"  {c['listing_id']:<12}{c['year'] or '':<6}{c['km'] or 0:>10,}"
-                  f"{c['price_try']:>12,}  {flag:<7}{c['city'] or ''}")
+                  f"{c['price_try']:>12,}  {flag:<7}"
+                  f"{c.get('panels') or '?':<26}{c['city'] or ''}")
 
     emit(data, args.json, human)
     return EXIT_OK
@@ -863,6 +995,10 @@ def cmd_capabilities(args) -> int:
             "the current category falls back to filtering the parsed rows and "
             "is reported as post_filters, so a caller never silently gets a "
             "wider market than it asked for.",
+            "Per-panel damage filters (--original, --not-changed, --panel) "
+            "read the detail-page diagram, so they only answer for listings "
+            "whose details have been fetched. Cars without one are reported as "
+            "unchecked, never as passing or failing; 'panels' shows coverage.",
             "Choice filters that sahibinden draws as checkboxes are repeatable "
             "(--fuel diesel --fuel hybrid); the ones it draws as radios "
             "(--seller, --listed-within) refuse a second value. 'filters' says "
@@ -1061,6 +1197,26 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-year", type=int)
     p.add_argument("--min-km", type=int)
     p.add_argument("--max-km", type=int)
+    # Per-panel filters. These read the stored diagram, so they answer for
+    # fetched details only — the rest are reported as unchecked, not dropped.
+    p.add_argument("--panel", action="append", metavar="PANEL=STATUS",
+                   help="e.g. hood=original, roof=original,local_painted "
+                        "(repeatable; see 'panels')")
+    p.add_argument("--original", action="append", metavar="PANELS",
+                   help="panel or group that must be untouched, e.g. hood, "
+                        "structural, doors (repeatable)")
+    p.add_argument("--not-changed", action="append", metavar="PANELS",
+                   help="panel or group that must not be replaced; paint is "
+                        "allowed (repeatable)")
+    p.add_argument("--not-painted", action="append", metavar="PANELS",
+                   help="panel or group with no full repaint; local touch-up "
+                        "allowed (repeatable)")
+    p.add_argument("--max-painted", type=int,
+                   help="most painted panels allowed across the whole car")
+    p.add_argument("--max-changed", type=int,
+                   help="most replaced panels allowed across the whole car")
+    p.add_argument("--limit", type=int, default=10,
+                   help="matches to list")
     p.add_argument("--clean-only", action="store_true",
                    help="only listings checked and found without heavy damage "
                         "or changed panels (unchecked listings are excluded, "
@@ -1102,6 +1258,15 @@ def build_parser() -> argparse.ArgumentParser:
                                    "Use after a parser fix to backfill fields "
                                    "without spending requests.")
     p.set_defaults(func=cmd_reparse)
+
+    p = sub.add_parser("panels", parents=[shared],
+                       help="the 13-part damage diagram: names, groups, coverage",
+                       description="What the per-panel filters accept, and how "
+                                   "many stored listings actually have a diagram "
+                                   "to test. Panel status comes from the detail "
+                                   "page, so it is only known for listings whose "
+                                   "details have been fetched.")
+    p.set_defaults(func=cmd_panels)
 
     p = sub.add_parser("harvest", parents=[shared],
                        help="rebuild the filter vocabulary from saved HTML",
