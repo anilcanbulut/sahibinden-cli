@@ -16,22 +16,31 @@ pip install -e .
 
 Puts `sahibinden-cli` on PATH — works from any directory, any terminal.
 
-### One-time session setup
+### Signing in
 
 sahibinden serves a sign-in wall to any session without cookies. This is not bot
 detection: a plain incognito window on the same connection gets the same wall.
 So the browser profile has to be signed in once.
 
 ```powershell
-python tools\handshake.py
+sahibinden-cli login
 ```
 
 A Chrome window opens. Sign in **with a burner account**, not your own — bans
 here are IP-wide and self-releasing, so the account is not what absorbs the
-damage, but there is no reason to attach your identity to this. The script
-detects the completed login on its own and verifies the wall is cleared.
+damage, but there is no reason to attach your identity to this. Nothing is typed
+for you and stdin is never read: the login is multi-step, and any navigation of
+ours mid-flow cancels it, so the command just watches until a real page loads.
+It then spends one request confirming the wall is actually cleared, so you are
+not left guessing.
 
-Re-run it if `status` starts reporting `login_wall`; sessions expire eventually.
+Sessions expire, and when one does *every* fetch comes back walled. `status`
+says so without spending anything:
+
+```
+  session    : EXPIRED — last request was walled at 2026-08-23 19:25
+               the browser session has expired — run `sahibinden-cli login`
+```
 
 ## Everyday use
 
@@ -183,7 +192,8 @@ sahibinden-cli config --set default_pages=10
 | `panels` | no | the 13-part diagram: panel names, groups, coverage |
 | `history` | no | price trail for one listing |
 | `reparse` | no | re-run parsers over saved HTML |
-| `status` | no | budget, cooldown, database stats (`-v` lists what is recorded) |
+| `status` | no | session, budget, cooldown, database stats (`-v` lists what is recorded) |
+| `login` | 1 | sign in by hand in a real Chrome window, then verify the session |
 | `sql` | no | read-only SQL against the local database |
 | `harvest` | no | rebuild the filter vocabulary from saved HTML |
 | `brands` / `cities` | no | what the resolver accepts |

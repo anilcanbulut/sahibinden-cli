@@ -19,7 +19,7 @@ from pathlib import Path
 from contextlib import contextmanager
 
 from .browser import connect, launch
-from .guard import Assessment, Breaker, assess
+from .guard import Assessment, Breaker, Verdict, assess
 
 from ..config import config
 
@@ -162,6 +162,11 @@ def fetch_pages(
                 break
             if not verdict.is_usable:
                 print("     -- unusable response, ending run (breaker not tripped)", flush=True)
+                if verdict.verdict is Verdict.LOGIN_WALL:
+                    # Every later request in this run would be walled too, so
+                    # the only useful thing left to print is the way out.
+                    print("     -- the session has expired: run "
+                          "`sahibinden-cli login` and sign in", flush=True)
                 break
 
             _dwell(page)

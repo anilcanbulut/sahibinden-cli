@@ -178,6 +178,7 @@ class Breaker:
         self._state.setdefault("day", None)
         self._state.setdefault("count", 0)
         self._state.setdefault("last_request_at", 0.0)
+        self._state.setdefault("last_verdict", None)
 
     def _save(self) -> None:
         self.state_path.write_text(json.dumps(self._state, indent=2), encoding="utf-8")
@@ -218,6 +219,15 @@ class Breaker:
             self._state["count"] = 0
         self._state["count"] += 1
         self._state["last_request_at"] = time.time()
+        # Kept so "is the session still good?" is answerable offline. Learning
+        # that the hard way costs a request, and a walled session walls every
+        # request, so the answer has to be on disk.
+        self._state["last_verdict"] = {
+            "verdict": assessment.verdict.value,
+            "reason": assessment.reason,
+            "at": time.time(),
+            "when": time.strftime("%Y-%m-%d %H:%M:%S"),
+        }
 
         if assessment.should_halt:
             step = min(len(self._recent_trips()), len(COOLDOWN_LADDER) - 1)
@@ -260,6 +270,11 @@ class Breaker:
         if self._state["day"] != self._today():
             return self.daily_limit
         return max(0, self.daily_limit - self._state["count"])
+
+    @property
+    def last_verdict(self) -> dict | None:
+        """How the most recent response was judged, or None before any."""
+        return self._state.get("last_verdict")
 
     @property
     def cooling_down(self) -> bool:

@@ -304,12 +304,59 @@ def cmd_panels(args) -> int:
     return EXIT_OK
 
 
+SESSION_HELP = ("the browser session has expired — run "
+                "`sahibinden-cli login` and sign in when Chrome opens")
+
+
+def session_note(last: dict | None) -> tuple[str, str | None]:
+    """Read the last verdict as a sentence about the session, plus a fix.
+
+    Only LOGIN_WALL is a session problem. A trip or a markup change is
+    something else entirely, and saying "log in again" about either would send
+    the user off to fix the wrong thing.
+    """
+    if not last:
+        return "unknown — no request recorded yet", None
+    verdict, when = last["verdict"], last.get("when", "?")
+    if verdict == "login_wall":
+        return f"EXPIRED — last request was walled at {when}", SESSION_HELP
+    if verdict == "ok":
+        return f"signed in (last request ok at {when})", None
+    return (f"last request was {verdict} at {when} ({last.get('reason', '')})",
+            None)
+
+
+def cmd_login(args) -> int:
+    """Hand the keyboard to the user, then verify the session they made."""
+    from .fetch.session import sign_in
+
+    lines: list[str] = []
+
+    def log(text=""):
+        lines.append(str(text))
+        if not args.json:
+            print(text, flush=True)
+
+    result = sign_in(timeout=args.timeout * 60, log=log)
+    if args.json:
+        emit({**result, "log": lines}, True, lambda d: None)
+    if result["ok"]:
+        return EXIT_OK
+    # A refusal is the breaker talking, not a failed login; keep them distinct
+    # so a caller does not retry into a cooldown.
+    return EXIT_REFUSED if result["stage"] == "refused" else EXIT_ERROR
+
+
 def cmd_status(args) -> int:
     breaker = Breaker(BREAKER_PATH)
     with Store(config.db_path) as store:
         stats = store.stats()
         inventory = store.inventory() if args.verbose else None
+    session, session_fix = session_note(breaker.last_verdict)
     data = {
+        "session": session,
+        "session_fix": session_fix,
+        "last_verdict": breaker.last_verdict,
         "budget_remaining": breaker.remaining,
         "daily_budget": breaker.daily_limit,
         "cooling_down": breaker.cooling_down,
@@ -323,6 +370,9 @@ def cmd_status(args) -> int:
     }
 
     def human(d):
+        print(f"  session    : {d['session']}")
+        if d["session_fix"]:
+            print(f"               {d['session_fix']}")
         print(f"  breaker    : {d['breaker']}")
         print(f"  quiet hours: {'yes' if d['in_quiet_hours'] else 'no'} "
               f"(safest time to sweep — an IP ban then costs you nothing)")
@@ -1004,6 +1054,10 @@ def cmd_capabilities(args) -> int:
             "(--seller, --listed-within) refuse a second value. 'filters' says "
             "which is which.",
             "Requests are budgeted per day and paced; a refused call means wait.",
+            "Every fetch needs a signed-in browser profile. When the session "
+            "expires the site returns a sign-in wall to everything, the run "
+            "ends itself, and 'status' reports session EXPIRED; 'login' opens "
+            "a window for a human to sign in and cannot be automated.",
         ],
         "commands": commands,
     }
@@ -1121,6 +1175,21 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--limit", type=int, default=20, help="rows to print")
     p.add_argument("--no-store", action="store_true", help="do not write to the database")
     p.set_defaults(func=cmd_search)
+
+    p = sub.add_parser("login", parents=[shared],
+                       help="sign in to sahibinden in a real browser window",
+                       description="Open Chrome on the automation profile and "
+                                   "wait while you sign in by hand, then spend "
+                                   "one request confirming the session actually "
+                                   "clears the sign-in wall. Nothing is typed "
+                                   "for you and stdin is never read, because the "
+                                   "login is multi-step and any navigation of "
+                                   "ours mid-flow cancels it. Use a burner "
+                                   "account: bans here are IP-wide, so the "
+                                   "account is not what absorbs them.")
+    p.add_argument("--timeout", type=int, default=15, metavar="MINUTES",
+                   help="how long to wait for you to finish signing in (default 15)")
+    p.set_defaults(func=cmd_login)
 
     p = sub.add_parser("status", parents=[shared], help="budget, breaker and database state",
                        description="Show remaining request budget, cooldown state "
