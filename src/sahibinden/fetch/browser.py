@@ -16,8 +16,11 @@ Deliberate choices:
 from __future__ import annotations
 
 import os
+import shutil
+import subprocess
 import sys
-from contextlib import contextmanager
+import time
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
 from .portable import load_session, seed_context
@@ -89,15 +92,79 @@ OFFSCREEN_POSITION = "-32000,-32000"
 
 
 def _no_display() -> bool:
-    """True on a host with no display server to draw a window on.
-
-    A headful Chrome on such a host does not quietly fall back to headless — it
-    fails to start at all, with an error about the display that says nothing
-    about the real problem. Detecting it here turns that into a working run.
-    """
+    """True on a host with no display server to draw a window on."""
     if sys.platform.startswith("win") or sys.platform == "darwin":
         return False
     return not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+
+
+def _free_display() -> str:
+    """A display number nothing is using."""
+    taken = {p.name for p in Path("/tmp/.X11-unix").glob("X*")} \
+        if Path("/tmp/.X11-unix").exists() else set()
+    n = 99
+    while f"X{n}" in taken:
+        n += 1
+    return f":{n}"
+
+
+@contextmanager
+def virtual_display(width: int = 1920, height: int = 1080, depth: int = 24):
+    """Run an Xvfb server so Chrome can be headful on a machine with no screen.
+
+    This is the difference between working and not working on a server, and the
+    reason is in this module's own header: headless Chrome is detectable, and
+    its WebGL falls back to SwiftShader, "one of the loudest automation signals
+    available". Falling back to headless because there is no monitor hands the
+    site exactly the signal the rest of this file is built to avoid — measured,
+    once: a headless fetch from this host drew an instant Cloudflare 403 with a
+    cf-mitigated header, where nothing else had changed.
+
+    Xvfb is a real X server that draws into memory. Chrome running against it
+    is an ordinary headful Chrome — same compositor, same window, same code
+    paths — that happens to have no monitor attached. The window still goes to
+    OFFSCREEN_POSITION, which costs nothing and keeps one code path for both.
+
+    Yields the display string, or None if Xvfb is not installed, so the caller
+    can decide what to do rather than dying inside a context manager.
+    """
+    if not shutil.which("Xvfb"):
+        yield None
+        return
+
+    display = _free_display()
+    proc = subprocess.Popen(
+        ["Xvfb", display, "-screen", "0", f"{width}x{height}x{depth}", "-nolisten", "tcp"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+
+    socket = Path("/tmp/.X11-unix") / f"X{display[1:]}"
+    for _ in range(100):  # Xvfb is quick, but not instant
+        if socket.exists():
+            break
+        if proc.poll() is not None:
+            yield None
+            return
+        time.sleep(0.1)
+    else:
+        proc.terminate()
+        yield None
+        return
+
+    previous = os.environ.get("DISPLAY")
+    os.environ["DISPLAY"] = display
+    try:
+        yield display
+    finally:
+        if previous is None:
+            os.environ.pop("DISPLAY", None)
+        else:
+            os.environ["DISPLAY"] = previous
+        proc.terminate()
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
 
 
 @contextmanager
@@ -123,21 +190,48 @@ def launch(
 
     profile_dir = Path(profile_dir or DEFAULT_PROFILE_DIR)
     profile_dir.mkdir(parents=True, exist_ok=True)
-    if headless is None:
-        headless = _no_display()
 
-    # An imported session carries the identity of the browser that made it, and
-    # replaying it under a different one is a contradiction we put there
-    # ourselves. Headless Chrome is the sharp case: it announces
-    # "HeadlessChrome/153" in its own user agent, so a Windows session replayed
-    # from here would arrive with Windows cookies and a Linux headless badge.
+    stack = ExitStack()
+    # Headful is the default everywhere, including on servers, because headless
+    # is what this site notices. Where there is no screen we make one: Xvfb is a
+    # real X server that draws into memory, so Chrome against it is an ordinary
+    # headful Chrome that happens to have no monitor.
     #
-    # --user-agent and --accept-lang are Chrome's own switches, so they set the
-    # header and navigator together at source. Playwright's user_agent= would
-    # do it through a CDP override instead, which is the observable way to lie
-    # about exactly this.
+    # Only when Xvfb is missing do we go headless, and then we say so. Quietly
+    # degrading here is how a working fetch turns into a 403 with no clue why —
+    # which is exactly what happened once before this branch existed.
+    on_virtual_display = False
+    if headless is not True and _no_display():
+        if stack.enter_context(virtual_display()) is not None:
+            headless = False
+            on_virtual_display = True
+        elif headless is None:
+            headless = True
+            print("  no display and no Xvfb — falling back to headless Chrome,\n"
+                  "  which this site detects. Install it with:\n"
+                  "      sudo apt-get install -y xvfb",
+                  file=sys.stderr)
+        else:
+            stack.close()
+            raise RuntimeError(
+                "headful Chrome was asked for, but this host has no display and "
+                "Xvfb is not installed.\n  sudo apt-get install -y xvfb"
+            )
+    elif headless is None:
+        headless = False
+
+    # An earlier version replayed the imported session's user agent here with
+    # --user-agent, on the reasoning that a Windows session should not announce
+    # itself as Linux. That was wrong, and it was measured wrong: Chrome derives
+    # its Client Hints from its own build rather than from the flag, so the
+    # override produced navigator.userAgent "Windows NT 10.0" alongside
+    # navigator.platform "Linux x86_64" — a browser contradicting itself inside
+    # one request. It earned an immediate Cloudflare 403.
+    #
+    # The browser's identity is whatever the browser actually is. Only the
+    # cookies travel. --accept-lang stays, because it is a real Chrome switch
+    # that sets the header and navigator.languages together at source.
     session = load_session() if seed else None
-    profile_ua = (session or {}).get("user_agent")
     profile_langs = (session or {}).get("languages")
 
     with sync_playwright() as p:
@@ -153,7 +247,13 @@ def launch(
             args=[
                 f"--accept-lang="
                 f"{accept_languages or profile_langs or ACCEPT_LANGUAGES}",
-                *([f"--user-agent={profile_ua}"] if profile_ua else []),
+                # Only on a machine we gave a fake screen to. Chrome will not
+                # start software WebGL on its own without this, and a browser
+                # reporting *no WebGL context at all* is stranger than one
+                # reporting a software renderer — plenty of real users sit on
+                # GPU-less VMs and RDP sessions. On a host with a real GPU this
+                # flag is absent, so nothing is claimed that is not true.
+                *(["--enable-unsafe-swiftshader"] if on_virtual_display else []),
                 *(
                     [f"--window-position={OFFSCREEN_POSITION}", "--window-size=1920,1080"]
                     if offscreen
@@ -167,3 +267,5 @@ def launch(
             yield context
         finally:
             context.close()
+            # Tears down Xvfb, if launch() started one.
+            stack.close()
