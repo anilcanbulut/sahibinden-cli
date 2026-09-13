@@ -100,7 +100,7 @@ def cmd_search(args) -> int:
         url, post = resolved["url"], resolved["post_filters"]
 
     result = sweep(url, max_pages=args.pages or config.default_pages,
-                   layout=args.layout)
+                   layout=args.layout, attach=getattr(args, "attach", False))
     if result.get("error"):
         print(f"refused: {result['error']} {result.get('reason','')}", file=sys.stderr)
         return EXIT_REFUSED
@@ -337,7 +337,8 @@ def cmd_login(args) -> int:
         if not args.json:
             print(text, flush=True)
 
-    result = sign_in(timeout=args.timeout * 60, log=log)
+    result = sign_in(timeout=args.timeout * 60, log=log,
+                     attach=getattr(args, "attach", False))
     if args.json:
         emit({**result, "log": lines}, True, lambda d: None)
     if result["ok"]:
@@ -345,6 +346,51 @@ def cmd_login(args) -> int:
     # A refusal is the breaker talking, not a failed login; keep them distinct
     # so a caller does not retry into a cooldown.
     return EXIT_REFUSED if result["stage"] == "refused" else EXIT_ERROR
+
+
+def cmd_export_session(args) -> int:
+    """Dump the signed-in browser's cookies so another machine can use them."""
+    from .fetch.portable import export_session
+
+    lines: list[str] = []
+
+    def log(text=""):
+        lines.append(str(text))
+        if not args.json:
+            print(text, flush=True)
+
+    try:
+        result = export_session(args.out, attach=getattr(args, "attach", False),
+                                log=log)
+    except RuntimeError as exc:
+        # connect() raises this with the full "start Chrome like so" recipe.
+        print(str(exc), file=sys.stderr)
+        return EXIT_ERROR
+
+    if args.json:
+        emit({**result, "log": lines}, True, lambda d: None)
+    elif result["ok"]:
+        print("\nCopy it to the other machine, then run 'import-session' there.")
+    return EXIT_OK if result["ok"] else EXIT_ERROR
+
+
+def cmd_import_session(args) -> int:
+    """Install a session exported from the machine that did the signing in."""
+    from .fetch.portable import import_session
+
+    lines: list[str] = []
+
+    def log(text=""):
+        lines.append(str(text))
+        if not args.json:
+            print(text, flush=True)
+
+    result = import_session(args.file, log=log)
+    if args.json:
+        emit({**result, "log": lines}, True, lambda d: None)
+    elif not result["ok"]:
+        print(f"could not import: {result['reason']}", file=sys.stderr)
+    return EXIT_OK if result["ok"] else EXIT_ERROR
 
 
 def cmd_status(args) -> int:
@@ -478,6 +524,7 @@ def cmd_details(args) -> int:
     scope = {k: getattr(args, k, None) for k in
              ("max_price", "min_price", "brand", "model", "min_year", "max_km")}
     result = fetch_details(args.listing_id or None, limit=args.limit,
+                           attach=getattr(args, "attach", False),
                            **{k: v for k, v in scope.items() if v is not None})
     if result.get("error"):
         print(f"refused: {result['error']}", file=sys.stderr)
@@ -763,7 +810,8 @@ def cmd_nightly(args) -> int:
         # Same page cap as `search`. Sweeping to completion by default would
         # spend hundreds of requests on a broad search; narrowing is the
         # caller's job, exactly as it is on the website itself.
-        result = sweep(url, max_pages=args.pages or config.default_pages)
+        result = sweep(url, max_pages=args.pages or config.default_pages,
+                       attach=getattr(args, "attach", False))
         if result.get("error"):
             report["searches"].append({"url": url, "error": result["error"]})
             break
@@ -779,7 +827,8 @@ def cmd_nightly(args) -> int:
         })
 
     if not args.no_details:
-        report["details"] = fetch_details(limit=config.detail_budget)
+        report["details"] = fetch_details(limit=config.detail_budget,
+                                          attach=getattr(args, "attach", False))
 
     report["ending_budget"] = Breaker(BREAKER_PATH).remaining
 
@@ -1083,6 +1132,11 @@ def _global_flags() -> argparse.ArgumentParser:
                         help="override requests allowed today")
     shared.add_argument("--min-delay", type=float, default=argparse.SUPPRESS,
                         help="override minimum seconds between requests")
+    shared.add_argument("--attach", action="store_true", default=argparse.SUPPRESS,
+                        help="drive an already-running Chrome over CDP at "
+                             "127.0.0.1:9222 instead of launching our own "
+                             "profile — the requests then originate from that "
+                             "browser's machine and IP")
     shared.add_argument("--max-delay", type=float, default=argparse.SUPPRESS,
                         help="override maximum seconds between requests")
     return shared
@@ -1190,6 +1244,29 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--timeout", type=int, default=15, metavar="MINUTES",
                    help="how long to wait for you to finish signing in (default 15)")
     p.set_defaults(func=cmd_login)
+
+    p = sub.add_parser("export-session", parents=[shared],
+                       help="write this browser's sahibinden cookies to a portable file",
+                       description="Run this on the machine that is signed in. "
+                                   "The browser profile itself does not travel — "
+                                   "Chrome encrypts its cookie store with keys "
+                                   "the OS holds — but the decrypted cookies do, "
+                                   "as plain JSON. Reads an already-open browser, "
+                                   "so it opens no page and costs no requests.")
+    p.add_argument("--out", default="session.json", metavar="FILE",
+                   help="where to write the session (default session.json)")
+    p.set_defaults(func=cmd_export_session)
+
+    p = sub.add_parser("import-session", parents=[shared],
+                       help="install a session exported from another machine",
+                       description="Install cookies exported elsewhere so the "
+                                   "fetcher on this host runs as that signed-in "
+                                   "session. Validates structure and expiry only; "
+                                   "it spends no request, so whether the site "
+                                   "still honours the session from this address "
+                                   "is settled by the next search, not by this.")
+    p.add_argument("file", help="the exported session JSON")
+    p.set_defaults(func=cmd_import_session)
 
     p = sub.add_parser("status", parents=[shared], help="budget, breaker and database state",
                        description="Show remaining request budget, cooldown state "

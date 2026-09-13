@@ -42,6 +42,56 @@ says so without spending anything:
                the browser session has expired — run `sahibinden-cli login`
 ```
 
+### Signing in on one machine, fetching from another
+
+`login` needs a screen to type into, which a server does not have. Copying
+`browser-profile/` across does not help either: Chrome encrypts its cookie
+store with keys the OS holds — App-Bound Encryption on Windows, the Keychain on
+macOS, the login keyring on Linux — so the copy decrypts to nothing, and across
+operating systems it will not even load.
+
+What travels is the cookie set, read out of a browser that has already
+decrypted it:
+
+```powershell
+# on the machine you are signed in on — opens no page, costs no requests
+sahibinden-cli export-session --out session.json
+
+# or, against a Chrome you already have open:
+#   chrome.exe --remote-debugging-port=9222 --user-data-dir=%USERPROFILE%\sb-chrome
+sahibinden-cli export-session --attach --out session.json
+```
+
+```bash
+scp session.json user@host:~/sahibinden-cli/data/
+ssh user@host 'sahibinden-cli import-session data/session.json'
+```
+
+Only cookies whose domain contains `sahibinden` are written, and the same
+filter runs again on import — a session file is data from another machine, and
+seeding whatever it happens to contain would push unrelated sites' cookies into
+this browser. Expired cookies are dropped when the context is seeded, not when
+the file is written, so a file that sat overnight degrades instead of failing.
+
+The user agent travels with the cookies, because a session minted by Chrome on
+Windows and replayed by Chromium on Linux otherwise announces a different
+browser than the one that logged in.
+
+`import-session` spends nothing and therefore proves nothing. Cookies are not
+bound to an IP on most sites, but "most" is not "this one", and the next
+`search` is what settles it: listings, or the wall.
+
+On a headless host `launch()` picks headless automatically when there is no
+`DISPLAY`, since headful Chrome there does not degrade — it fails to start.
+Chrome still has to be installed: `libnss3` and `libnspr4` are hard
+requirements and a minimal server image has neither.
+
+`--attach` is the other half of the same problem. It drives a Chrome already
+running at `127.0.0.1:9222` instead of launching one, so with a reverse tunnel
+(`ssh -R 9222:127.0.0.1:9222 user@host`) the requests leave from *that*
+machine's address — which matters when the site is Turkish and the server is
+not.
+
 ## Everyday use
 
 ```powershell
@@ -194,6 +244,8 @@ sahibinden-cli config --set default_pages=10
 | `reparse` | no | re-run parsers over saved HTML |
 | `status` | no | session, budget, cooldown, database stats (`-v` lists what is recorded) |
 | `login` | 1 | sign in by hand in a real Chrome window, then verify the session |
+| `export-session` | no | write this browser's sahibinden cookies to a portable file |
+| `import-session` | no | install a session exported from another machine |
 | `sql` | no | read-only SQL against the local database |
 | `harvest` | no | rebuild the filter vocabulary from saved HTML |
 | `brands` / `cities` | no | what the resolver accepts |

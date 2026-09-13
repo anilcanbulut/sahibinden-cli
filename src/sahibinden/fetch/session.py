@@ -21,7 +21,7 @@ import time
 from urllib.parse import urlparse
 
 from ..config import config
-from .browser import DEFAULT_PROFILE_DIR, launch
+from .browser import CDP_URL, DEFAULT_PROFILE_DIR, connect, launch
 from .fetcher import BREAKER_PATH, _store_raw
 from .guard import Breaker, Verdict, assess
 
@@ -98,12 +98,19 @@ def wait_for_session(page, timeout: int = SIGN_IN_TIMEOUT, *, log=print) -> bool
     return False
 
 
-def sign_in(*, timeout: int = SIGN_IN_TIMEOUT, log=print) -> dict:
+def sign_in(*, timeout: int = SIGN_IN_TIMEOUT, log=print, attach: bool = False) -> dict:
     """Open a real Chrome window, wait for a human login, then verify it.
 
     Returns a result dict; ``ok`` is only true once a real search page has come
     back through the same code path the fetcher uses, so a session that looks
     established but still gets walled is reported as a failure, not a success.
+
+    ``attach=True`` drives a Chrome already running at ``CDP_URL`` instead of
+    launching our own profile. That is the only workable mode on a headless
+    host: there is no display to draw a sign-in window on, and more importantly
+    the requests then leave from *that* browser's machine, so a tunnelled
+    Turkish residential browser answers sahibinden from a Turkish address
+    rather than from whatever datacentre this process happens to sit in.
     """
     breaker = Breaker(BREAKER_PATH)
     result = {"ok": False, "profile": str(DEFAULT_PROFILE_DIR), "stage": "start",
@@ -121,37 +128,54 @@ def sign_in(*, timeout: int = SIGN_IN_TIMEOUT, log=print) -> dict:
         log(f"Not now — {exc}")
         return result
 
-    log("A Chrome window will open. In it:\n")
+    if attach:
+        result["profile"] = f"attached: {CDP_URL}"
+        log(f"Attaching to the Chrome already running at {CDP_URL}.")
+        log("Sign in to sahibinden in THAT browser if you have not already:\n")
+    else:
+        log("A Chrome window will open. In it:\n")
     log("  1. Sign in with your BURNER account (not your personal one)")
     log("  2. Tick 'Beni hatırla' / 'Keep me signed in' if offered")
     log("  3. Click into a car listing, scroll, go back — browse like a person")
     log("\nNo need to come back here — this detects the session on its own.\n")
 
-    # The one place the window must be visible — you are typing into it.
-    with launch(offscreen=False) as ctx:
-        page = ctx.pages[0] if ctx.pages else ctx.new_page()
-        page.goto(START_URL, wait_until="domcontentloaded", timeout=60_000)
+    # Attached: the user's own window, already on screen on their own machine.
+    # Launched: the one place our window must be visible — you type into it.
+    # headless=False explicitly: an invisible window you cannot type into is
+    # worse than a clear failure about the missing display.
+    opener = connect() if attach else launch(offscreen=False, headless=False)
+    with opener as ctx:
+        page = ctx.new_page() if attach else (ctx.pages[0] if ctx.pages else ctx.new_page())
+        try:
+            page.goto(START_URL, wait_until="domcontentloaded", timeout=60_000)
 
-        if not wait_for_session(page, timeout, log=log):
-            result.update(stage="timeout",
-                          reason="timed out waiting for sign-in; nothing was fetched")
-            log("\nTimed out waiting for sign-in. Nothing was fetched; rerun "
-                "when you are ready.")
-            return result
+            if not wait_for_session(page, timeout, log=log):
+                result.update(stage="timeout",
+                              reason="timed out waiting for sign-in; nothing was fetched")
+                log("\nTimed out waiting for sign-in. Nothing was fetched; rerun "
+                    "when you are ready.")
+                return result
 
-        cookies = ctx.cookies()
-        result["cookies"] = len(cookies)
-        log(f"\n  {len(cookies)} cookies stored for "
-            f"{sorted({c['domain'] for c in cookies})}")
+            cookies = ctx.cookies()
+            result["cookies"] = len(cookies)
+            log(f"\n  {len(cookies)} cookies stored for "
+                f"{sorted({c['domain'] for c in cookies})}")
 
-        log(f"\n  verifying against {VERIFY_URL} ...")
-        response = page.goto(VERIFY_URL, wait_until="domcontentloaded", timeout=60_000)
-        status = response.status if response else 0
-        html = page.content()
-        verdict = assess(status, dict(response.headers) if response else {},
-                         html, expect="search")
-        breaker.record(verdict)
-        _store_raw(VERIFY_URL, html, failed=not verdict.is_usable)
+            log(f"\n  verifying against {VERIFY_URL} ...")
+            response = page.goto(VERIFY_URL, wait_until="domcontentloaded", timeout=60_000)
+            status = response.status if response else 0
+            html = page.content()
+            verdict = assess(status, dict(response.headers) if response else {},
+                             html, expect="search")
+            breaker.record(verdict)
+            _store_raw(VERIFY_URL, html, failed=not verdict.is_usable)
+        finally:
+            # We opened this tab in the user's browser; we close only it.
+            if attach:
+                try:
+                    page.close()
+                except Exception:
+                    pass
 
     result.update(stage="verified", verdict=verdict.verdict.value,
                   reason=verdict.reason, status=status, bytes=len(html),
@@ -172,7 +196,11 @@ def sign_in(*, timeout: int = SIGN_IN_TIMEOUT, log=print) -> dict:
                   total_results=parsed["total_results"])
     log(f"\n  parsed {len(parsed['listings'])} listings, "
         f"total_results={parsed['total_results']}")
-    log("\nSession established and verified. The profile persists, so the")
-    log("fetcher can now run unattended.")
+    if attach:
+        log("\nSession established and verified in the attached browser. Keep")
+        log("that Chrome open and the tunnel up; every fetch rides through it.")
+    else:
+        log("\nSession established and verified. The profile persists, so the")
+        log("fetcher can now run unattended.")
     log(f"\nBreaker: {breaker.status()}")
     return result

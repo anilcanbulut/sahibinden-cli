@@ -15,8 +15,12 @@ Deliberate choices:
 
 from __future__ import annotations
 
+import os
+import sys
 from contextlib import contextmanager
 from pathlib import Path
+
+from .portable import load_session, seed_context
 
 CHROME_PATH = Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe")
 
@@ -84,19 +88,57 @@ def connect(cdp_url: str = CDP_URL):
 OFFSCREEN_POSITION = "-32000,-32000"
 
 
+def _no_display() -> bool:
+    """True on a host with no display server to draw a window on.
+
+    A headful Chrome on such a host does not quietly fall back to headless — it
+    fails to start at all, with an error about the display that says nothing
+    about the real problem. Detecting it here turns that into a working run.
+    """
+    if sys.platform.startswith("win") or sys.platform == "darwin":
+        return False
+    return not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+
+
 @contextmanager
 def launch(
     profile_dir: Path | None = None,
     *,
-    headless: bool = False,
+    headless: bool | None = None,
     offscreen: bool = True,
     accept_languages: str | None = None,
+    seed: bool = True,
 ):
-    """Yield a Patchright persistent browser context using real Chrome."""
+    """Yield a Patchright persistent browser context using real Chrome.
+
+    ``headless=None`` means "decide": headful where there is a display, because
+    that is what the fingerprint audit was run against, and headless where
+    there is not, because on a server the alternative is not starting at all.
+
+    ``seed`` pushes an imported session's cookies into the profile before
+    anything is fetched. That is what lets a session signed in on one machine
+    drive the fetcher on another.
+    """
     from patchright.sync_api import sync_playwright
 
     profile_dir = Path(profile_dir or DEFAULT_PROFILE_DIR)
     profile_dir.mkdir(parents=True, exist_ok=True)
+    if headless is None:
+        headless = _no_display()
+
+    # An imported session carries the identity of the browser that made it, and
+    # replaying it under a different one is a contradiction we put there
+    # ourselves. Headless Chrome is the sharp case: it announces
+    # "HeadlessChrome/153" in its own user agent, so a Windows session replayed
+    # from here would arrive with Windows cookies and a Linux headless badge.
+    #
+    # --user-agent and --accept-lang are Chrome's own switches, so they set the
+    # header and navigator together at source. Playwright's user_agent= would
+    # do it through a CDP override instead, which is the observable way to lie
+    # about exactly this.
+    session = load_session() if seed else None
+    profile_ua = (session or {}).get("user_agent")
+    profile_langs = (session or {}).get("languages")
 
     with sync_playwright() as p:
         context = p.chromium.launch_persistent_context(
@@ -109,7 +151,9 @@ def launch(
             # artifact in devicePixelRatio and a screen size no monitor has.
             no_viewport=True,
             args=[
-                f"--accept-lang={accept_languages or ACCEPT_LANGUAGES}",
+                f"--accept-lang="
+                f"{accept_languages or profile_langs or ACCEPT_LANGUAGES}",
+                *([f"--user-agent={profile_ua}"] if profile_ua else []),
                 *(
                     [f"--window-position={OFFSCREEN_POSITION}", "--window-size=1920,1080"]
                     if offscreen
@@ -117,6 +161,8 @@ def launch(
                 ),
             ],
         )
+        if seed:
+            seed_context(context, session)
         try:
             yield context
         finally:

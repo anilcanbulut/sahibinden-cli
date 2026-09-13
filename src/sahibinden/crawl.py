@@ -53,6 +53,7 @@ def sweep(
     max_pages: int | None = None,
     layout: str = "vehicle",
     daily_limit: int | None = None,
+    attach: bool = False,
 ) -> dict:
     """Crawl a search from page 1, discovering depth from the first response."""
     daily_limit = daily_limit or config.daily_budget
@@ -66,7 +67,7 @@ def sweep(
     # Page 1 first: its total_results tells us how deep the search actually
     # goes, so we never guess at page count.
     first = fetch_pages([page_url(base_url, 0)], expect="search",
-                        daily_limit=daily_limit)
+                        daily_limit=daily_limit, attach=attach)
     if not first or not first[0].ok:
         verdict = first[0].assessment if first else None
         return {
@@ -81,7 +82,8 @@ def sweep(
 
     pages = [head]
     if urls:
-        for result in fetch_pages(urls, expect="search", daily_limit=daily_limit):
+        for result in fetch_pages(urls, expect="search", daily_limit=daily_limit,
+                                  attach=attach):
             if not result.ok:
                 break
             pages.append(parse_search(result.html, layout))
@@ -110,6 +112,7 @@ def fetch_details(
     *,
     limit: int | None = None,
     db_path: str | None = None,
+    attach: bool = False,
     **scope,
 ) -> dict:
     """Fetch detail pages — the expensive tier — and store what they hold.
@@ -151,7 +154,8 @@ def fetch_details(
         if not targets:
             return {"error": "nothing to fetch", "fetched": [], "unknown_ids": sorted(missing)}
 
-        results = fetch_pages([r["url"] for r in targets], expect="detail")
+        results = fetch_pages([r["url"] for r in targets], expect="detail",
+                              attach=attach)
 
         fetched, failures = [], []
         for row, result in zip(targets, results):
