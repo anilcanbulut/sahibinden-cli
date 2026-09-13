@@ -42,6 +42,44 @@ says so without spending anything:
                the browser session has expired — run `sahibinden-cli login`
 ```
 
+### Fetching on one machine, reading on another
+
+The session cannot be moved. That is settled, not suspected: sahibinden sits
+behind Cloudflare, `cf_clearance` is issued against the client address it was
+earned on, and a session exported from Istanbul and replayed from a server in
+Germany came back `HTTP 403` with `cf-mitigated` and a `Just a moment...`
+challenge page. No cookie file fixes that — it is the specific thing the cookie
+exists to prevent.
+
+It does not need to be moved. Only three commands touch the network, and
+everything you actually ask the data lives in the other column:
+
+| Runs where the browser is | Runs anywhere, offline and free |
+|---|---|
+| `search` `details` `nightly` | `price` `listing` `panels` `history` `sql` `reparse` |
+
+So the artefact that travels is `data/sahibinden.db`. Sweep on the machine that
+can reach the site; read from wherever you happen to be working:
+
+```powershell
+.\tools\publish.ps1                 # sweep, then publish the database
+.\tools\publish.ps1 -SkipFetch      # publish what is stored, spending nothing
+```
+
+The database is snapshotted with `VACUUM INTO` rather than copied. The store
+runs in WAL mode, so the `.db` file alone is not the database — recent writes
+sit in `sahibinden.db-wal` until a checkpoint — and copying the three files
+separately can still tear if anything writes between them.
+
+`breaker.json` deliberately stays put. It is a per-machine request budget, and
+shipping it would let one machine's cooldown silence the other, or reset a real
+one by overwriting it with a clean file. `data/raw/` stays put too: `reparse`
+needs it, and it belongs where it was fetched.
+
+For an unattended task, set up key auth first and confirm `ssh <remote> exit`
+returns without prompting. Then the nightly sweep and the publish are one
+scheduled job, and the reading machine is never more than a day stale.
+
 ### Signing in on one machine, fetching from another
 
 `login` needs a screen to type into, which a server does not have. Copying
