@@ -143,6 +143,49 @@ def main() -> int:
     finally:
         session_module.sign_in = original
 
+    print("\n5. a cooldown can be ended early, and the block is still remembered")
+    block = Assessment(Verdict.CHALLENGED, "cloudflare", 403, "test block")
+    path = Path(tempfile.mkdtemp()) / "breaker.json"
+    breaker = Breaker(path, daily_limit=10)
+    breaker.record(block)
+    check("a block starts a cooldown", breaker.cooling_down, True)
+    cleared = breaker.clear_cooldown()
+    check("which reports what was left", cleared["minutes_left"], 90)
+    check("and why it started", "test block" in (cleared["reason"] or ""), True)
+    check("then ends", Breaker(path).cooling_down, False)
+    try:
+        Breaker(path).check()
+        allowed = True
+    except RuntimeError:
+        allowed = False
+    check("so requests are allowed again", allowed, True)
+    # Ending the wait is not a verdict on the rate: the block still counts.
+    check("waits stay widened", Breaker(path).delay_multiplier, 1.75)
+    breaker = Breaker(path, daily_limit=10)
+    breaker.record(block)
+    check("a second block climbs to 4 hours",
+          breaker._state["trips"][-1]["cooldown_seconds"], 4 * 60 * 60)
+    cleared = breaker.clear_cooldown(forget_trips=True)
+    check("forgetting counts both blocks", cleared["trips_forgiven"], 2)
+    check("waits back to normal", Breaker(path).delay_multiplier, 1.0)
+    check("the blocks stay on disk", len(Breaker(path)._state["trips"]), 2)
+    breaker = Breaker(path, daily_limit=10)
+    breaker.record(block)
+    check("the next block starts at 90 minutes again",
+          breaker._state["trips"][-1]["cooldown_seconds"], 90 * 60)
+    Breaker(path).clear_cooldown()
+    check("nothing to end is not an error",
+          Breaker(path).clear_cooldown()["was_cooling_down"], False)
+
+    real_path, cli.BREAKER_PATH = cli.BREAKER_PATH, path
+    try:
+        Breaker(path).record(block)
+        args = argparse.Namespace(json=True, forget_blocks=False)
+        check("the command succeeds", cli.cmd_reset_cooldown(args), cli.EXIT_OK)
+        check("and ends the cooldown", Breaker(path).cooling_down, False)
+    finally:
+        cli.BREAKER_PATH = real_path
+
     print("\n" + "=" * 62)
     print("FAILURES:" if failures else "all checks passed",
           *failures, sep="\n  " if failures else "")

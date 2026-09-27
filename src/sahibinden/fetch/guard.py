@@ -217,7 +217,8 @@ class Breaker:
 
     def _recent_trips(self) -> list[dict]:
         cutoff = time.time() - TRIP_MEMORY_DAYS * 86_400
-        return [t for t in self._state["trips"] if t.get("at", 0) >= cutoff]
+        return [t for t in self._state["trips"]
+                if t.get("at", 0) >= cutoff and not t.get("forgiven")]
 
     def check(self) -> None:
         """Raise if we must not send another request right now."""
@@ -226,7 +227,8 @@ class Breaker:
             raise RuntimeError(
                 f"Cooling down for {remaining_cooldown / 60:.0f} more minutes.\n"
                 f"  reason: {self._state['tripped_reason']}\n"
-                "This clears itself — no manual action needed."
+                "This clears itself — no manual action needed. To end it now, "
+                "run 'sahibinden-cli reset-cooldown'."
             )
         if self._state["tripped_until"]:
             # Cooldown elapsed: clear it, but the trip stays in history so the
@@ -276,6 +278,31 @@ class Breaker:
                 f"({assessment.reason})"
             )
         self._save()
+
+    def clear_cooldown(self, *, forget_trips: bool = False) -> dict:
+        """End a cooldown now, on the operator's say-so.
+
+        By default the trip stays counted, so delays stay widened and the next
+        trip climbs the ladder: ending the wait early is not evidence the rate
+        was fine. ``forget_trips`` drops the past week's trips from that count
+        too. They are marked rather than deleted, so the history of what
+        triggered each block — the evidence the defaults are tuned from — stays
+        on disk.
+        """
+        recent = self._recent_trips()
+        cleared = {
+            "was_cooling_down": self.cooling_down,
+            "minutes_left": round(max(0.0, self._state["tripped_until"] - time.time()) / 60),
+            "reason": self._state["tripped_reason"],
+            "trips_forgiven": len(recent) if forget_trips else 0,
+        }
+        self._state["tripped_until"] = 0
+        self._state["tripped_reason"] = None
+        if forget_trips:
+            for trip in recent:
+                trip["forgiven"] = True
+        self._save()
+        return cleared
 
     def sleep_needed(self, target_delay: float) -> float:
         """Seconds still to wait before the next request may go out.

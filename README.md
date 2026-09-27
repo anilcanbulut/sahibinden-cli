@@ -146,7 +146,7 @@ How the values work:
 | Option | What it does |
 |---|---|
 | `--sort date_desc` | newest listings first. The default is `price_asc` (cheapest first); `price_desc` and `date_asc` also work. |
-| `--pages 10` | read more pages. Each page is 20 listings and costs 1 request. The default is 5. |
+| `--pages 10` | read more pages. Each page is 20 listings and costs 1 request. The default is 5 ([change it](#changing-the-limits)). |
 | `--limit 50` | print more rows. The default is 20. |
 | `--url "<link>"` | skip the filter flags. Set your filters on the website, copy the address bar and paste it here. Any other filter flags are ignored. |
 | `--json` | print full data for every listing, including its title and link |
@@ -168,20 +168,102 @@ sahibinden blocks your IP when it sees too many requests. The block shows a
 page saying "Olağan dışı erişim tespit ettik" and lasts about an hour. It
 applies to your normal browsing too. So the CLI limits itself:
 
-- **40 requests a day.** One request is one page of 20 listings, so a default
-  search costs up to 5.
-- **12–25 seconds between requests.**
+- **40 requests a day**, across every command. One request is one page of 20
+  listings, so a default search costs up to 5. The count resets at midnight.
+- **12–25 seconds between requests**, picked at random each time.
+- **At most 15 listing pages per `details` run**, so reading damage records
+  can't use up the whole day.
 - **It backs off when sahibinden pushes back.** It stops and refuses to fetch
-  for a while: 90 minutes the first time, longer on repeats. It also waits
-  longer between requests for the following week. You'll see `refused:` and
-  exit code 2. Wait it out instead of retrying.
+  for a while: 90 minutes the first time, 4 hours if it happens again within a
+  week, 12 hours after that. Each block in the past week also multiplies the
+  wait between requests by 1.75, so after one block it's 21–44 seconds.
+  You'll see `refused:` and exit code 2. Wait it out instead of retrying, or
+  [end it early](#ending-a-cooldown-early).
 
 Even within those limits, many searches back to back can trigger a block. On
 27 Sep 2026 one came after 19 requests in about 25 minutes. Spread your
 searches out, and prefer one well-filtered search over several broad ones.
 
 `sahibinden-cli status` shows whether you're signed in, how many requests are
-left today, and any cooldown.
+left today, the limits in effect, and any cooldown.
+
+### Changing the limits
+
+| Setting | Default | What it limits | For one run |
+|---|---|---|---|
+| `daily_budget` | 40 | requests per day, all commands together | `--daily-budget 60` |
+| `min_delay` | 12 | shortest wait between requests, in seconds | `--min-delay 20` |
+| `max_delay` | 25 | longest wait between requests, in seconds | `--max-delay 40` |
+| `default_pages` | 5 | pages a search reads | `--pages 10` on `search` |
+| `detail_budget` | 15 | listing pages one `details` run opens | none. `details --limit 5` can lower it, not raise it. |
+
+**To change a limit for good**, save it with `config --set`, once per setting:
+
+```powershell
+sahibinden-cli config --set daily_budget=60 --set min_delay=20 --set max_delay=40
+```
+
+This writes `data/config.json`. It stays on this PC (it isn't committed), so
+set it again on another PC. `sahibinden-cli config` prints the current
+settings. Check them after a change: a misspelled name fails with an error,
+but a value that isn't a number is ignored and the default is used.
+
+**To change a limit for one run**, use the flag in the last column.
+`--daily-budget`, `--min-delay` and `--max-delay` work with every command:
+
+```powershell
+sahibinden-cli search --brand vw --model passat --daily-budget 60 --min-delay 20 --max-delay 40
+```
+
+**To change a limit for one terminal window**, set an environment variable
+named `SAHIBINDEN_` plus the setting in capitals:
+
+```powershell
+$env:SAHIBINDEN_DETAIL_BUDGET = 25
+```
+
+When a limit is set in more than one place, a flag beats an environment
+variable, which beats `config --set`.
+
+Things to know:
+
+- **Raising the budget on a day you've used it doesn't reset the count.**
+  After 40 requests, `--daily-budget 60` gives you 20 more.
+- **`--pages` has ceilings of its own.** A search never reads more pages than
+  today's budget has left, or more than 50 (1,000 listings), which is as far
+  as sahibinden goes for one search.
+- **Looser limits mean more blocks.** The defaults aren't generous: the block
+  on 27 Sep 2026 came well inside them. Raise the budget or shorten the waits
+  in small steps.
+- **The cooldown lengths and the 1.75× slow-down can't be changed** with a
+  setting. They're fixed in `src/sahibinden/fetch/guard.py`. You can still end
+  a cooldown whenever you like (below).
+- `config` also lists settings that aren't limits (`quiet_start`, `quiet_end`,
+  `max_offset`, `accept_languages`, `db_path`, `profile_dir`). Leave those as
+  they are.
+
+### Ending a cooldown early
+
+```powershell
+sahibinden-cli reset-cooldown
+```
+
+This ends the cooldown now, so you can search again straight away. It costs no
+requests. It prints how long was left and what started the cooldown.
+
+The block still counts for a week. Waits between requests stay 1.75× longer,
+and the next block gets the longer cooldown. To forget the past week's blocks
+as well, so waits go back to 12–25 seconds and the next cooldown is 90 minutes
+again:
+
+```powershell
+sahibinden-cli reset-cooldown --forget-blocks
+```
+
+Ending a cooldown doesn't lift sahibinden's block. If sahibinden is still
+blocking you, the next search is refused again and starts a longer cooldown.
+To check first, open sahibinden.com in your normal browser. If it shows the
+"Olağan dışı erişim tespit ettik" page, the block is still on, so keep waiting.
 
 ## Using another PC
 
@@ -233,6 +315,7 @@ nothing:
 | `price --brand Volkswagen --model Passat` | min, quartiles, median and max price across everything saved for that car. Takes `--city`, `--min-year`, `--max-km` and more. |
 | `listing <id>` | everything saved about one car, including price changes since it was first seen |
 | `status` | sign-in state, requests left today, and what's in the database |
+| `reset-cooldown` | ends a cooldown now ([more](#ending-a-cooldown-early)) |
 | `filters`, `brands`, `cities` | the values the filter flags accept |
 
 These commands use requests:

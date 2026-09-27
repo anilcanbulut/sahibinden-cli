@@ -489,6 +489,32 @@ def cmd_status(args) -> int:
     return EXIT_REFUSED if breaker.cooling_down else EXIT_OK
 
 
+def cmd_reset_cooldown(args) -> int:
+    """End a cooldown early. Spends no request."""
+    breaker = Breaker(BREAKER_PATH)
+    cleared = breaker.clear_cooldown(forget_trips=args.forget_blocks)
+    data = {**cleared,
+            "delay_multiplier": round(breaker.delay_multiplier, 2),
+            "breaker": breaker.status()}
+
+    def human(d):
+        if d["was_cooling_down"]:
+            print(f"  cooldown ended ({d['minutes_left']} minutes were left)")
+            print(f"  it started because: {d['reason']}")
+        else:
+            print("  no cooldown to end")
+        if d["trips_forgiven"]:
+            print(f"  forgot {d['trips_forgiven']} block(s) from the past week: "
+                  "waits are back to normal")
+        elif d["delay_multiplier"] > 1:
+            print(f"  waits stay x{d['delay_multiplier']:.2f} for blocks in the "
+                  "past week (--forget-blocks drops them)")
+        print(f"  breaker: {d['breaker']}")
+
+    emit(data, args.json, human)
+    return EXIT_OK
+
+
 def cmd_brands(args) -> int:
     tax = Taxonomy()
     known = tax.brands
@@ -1345,6 +1371,20 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("-v", "--verbose", action="store_true",
                    help="list what is recorded: models, coverage, tracked searches")
     p.set_defaults(func=cmd_status)
+
+    p = sub.add_parser("reset-cooldown", parents=[shared],
+                       help="end a cooldown now instead of waiting it out",
+                       description="Lift the cooldown a block started, so "
+                                   "fetching can resume immediately. Spends no "
+                                   "request. If sahibinden is still blocking "
+                                   "this IP, the next request trips a longer "
+                                   "one. Blocks from the past week keep "
+                                   "widening the wait between requests unless "
+                                   "--forget-blocks is given.")
+    p.add_argument("--forget-blocks", action="store_true",
+                   help="also forget the past week's blocks: waits go back to "
+                        "normal and the next block starts at 90 minutes again")
+    p.set_defaults(func=cmd_reset_cooldown)
 
     p = sub.add_parser("filters", parents=[shared],
                        help="list available search filters and their values",
