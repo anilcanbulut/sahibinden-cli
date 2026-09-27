@@ -186,15 +186,22 @@ left today, and any cooldown.
 ## Using another PC
 
 You don't have to sign in on every PC. This repo is private, so the sign-in
-is committed with it as `session.json`. On another PC, after cloning or
-pulling:
+is committed with it as `session.json`. On a new PC (Python 3.10+ and Google
+Chrome installed):
 
 ```powershell
+git clone git@github.com:anilcanbulut/sahibinden-cli.git
+cd sahibinden-cli
+pip install -e .
 sahibinden-cli import-session session.json
+sahibinden-cli search --brand vw --model passat --pages 1
 ```
 
-The next search on that PC uses the sign-in. To refresh the file, on the PC
-that is signed in (costs no requests):
+If that search prints listings, the sign-in carried over. If it asks you to
+sign in or is refused, run `sahibinden-cli login` on that PC instead. On a PC
+that already has the repo, `git pull` and then `import-session`.
+
+To refresh the file, on the PC that is signed in (costs no requests):
 
 ```powershell
 sahibinden-cli export-session --out session.json
