@@ -1,0 +1,881 @@
+{
+  "categories": {
+    "arazi-suv-pickup": {
+      "brands": {
+        "Alfa Romeo": "arazi-suv-pickup-alfa-romeo",
+        "Arora": "arazi-suv-pickup-arora",
+        "Aston Martin": "arazi-suv-pickup-aston-martin",
+        "Audi": "arazi-suv-pickup-audi",
+        "BMW": "arazi-suv-pickup-bmw",
+        "BYD": "arazi-suv-pickup-byd",
+        "Bentley": "arazi-suv-pickup-bentley",
+        "Cadillac": "arazi-suv-pickup-cadillac",
+        "Chery": "arazi-suv-pickup-chery",
+        "Chevrolet": "arazi-suv-pickup-chevrolet",
+        "Chrysler": "arazi-suv-pickup-chrysler",
+        "Citroen": "arazi-suv-pickup-citroen",
+        "Cupra": "arazi-suv-pickup-cupra",
+        "DFM": "arazi-suv-pickup-dfm",
+        "DFSK": "arazi-suv-pickup-dfsk",
+        "DS Automobiles": "arazi-suv-pickup-ds-automobiles",
+        "Dacia": "arazi-suv-pickup-dacia",
+        "Daewoo": "arazi-suv-pickup-daewoo",
+        "Daihatsu": "arazi-suv-pickup-daihatsu",
+        "Dodge": "arazi-suv-pickup-dodge",
+        "Ferrari": "arazi-suv-pickup-ferrari",
+        "Fiat": "arazi-suv-pickup-fiat",
+        "Ford": "arazi-suv-pickup-ford",
+        "Forthing": "arazi-suv-pickup-forthing",
+        "Foton": "arazi-suv-pickup-foton",
+        "GMC": "arazi-suv-pickup-gmc",
+        "Honda": "arazi-suv-pickup-honda",
+        "Hongqi": "arazi-suv-pickup-hongqi",
+        "Hummer": "arazi-suv-pickup-hummer",
+        "Hyundai": "arazi-suv-pickup-hyundai",
+        "Infiniti": "arazi-suv-pickup-infiniti",
+        "Isuzu": "arazi-suv-pickup-isuzu",
+        "Jaecoo": "arazi-suv-pickup-jaecoo",
+        "Jaguar": "arazi-suv-pickup-jaguar",
+        "Jeep": "arazi-suv-pickup-jeep",
+        "KGM SsangYong": "arazi-suv-pickup-kgm-ssangyong",
+        "Kia": "arazi-suv-pickup-kia",
+        "Lada": "arazi-suv-pickup-lada",
+        "Lamborghini": "arazi-suv-pickup-lamborghini",
+        "Land Rover": "arazi-suv-pickup-land-rover",
+        "Lexus": "arazi-suv-pickup-lexus",
+        "Lincoln": "arazi-suv-pickup-lincoln",
+        "Lotus": "arazi-suv-pickup-lotus",
+        "Lynk & Co": "arazi-suv-pickup-lynk-co",
+        "MG": "arazi-suv-pickup-mg",
+        "Mahindra": "arazi-suv-pickup-mahindra",
+        "Maserati": "arazi-suv-pickup-maserati",
+        "Mazda": "arazi-suv-pickup-mazda",
+        "Mercedes-Benz": "arazi-suv-pickup-mercedes-benz",
+        "Mini": "arazi-suv-pickup-mini",
+        "Mitsubishi": "arazi-suv-pickup-mitsubishi",
+        "Nissan": "arazi-suv-pickup-nissan",
+        "Oldsmobile": "arazi-suv-pickup-oldsmobile",
+        "Omoda": "arazi-suv-pickup-omoda",
+        "Opel": "arazi-suv-pickup-opel",
+        "Peugeot": "arazi-suv-pickup-peugeot",
+        "Porsche": "arazi-suv-pickup-porsche",
+        "Poyraz": "arazi-suv-pickup-poyraz",
+        "Renault": "arazi-suv-pickup-renault",
+        "Rolls-Royce": "arazi-suv-pickup-rolls-royce",
+        "SWM": "arazi-suv-pickup-swm",
+        "Santana": "arazi-suv-pickup-santana",
+        "Seat": "arazi-suv-pickup-seat",
+        "Seres": "arazi-suv-pickup-seres",
+        "Skoda": "arazi-suv-pickup-skoda",
+        "Skywell": "arazi-suv-pickup-skywell",
+        "Subaru": "arazi-suv-pickup-subaru",
+        "Suzuki": "arazi-suv-pickup-suzuki",
+        "TOGG": "arazi-suv-pickup-togg",
+        "Tata": "arazi-suv-pickup-tata",
+        "Toyota": "arazi-suv-pickup-toyota",
+        "Volkswagen": "arazi-suv-pickup-volkswagen",
+        "Volvo": "arazi-suv-pickup-volvo",
+        "Voyah": "arazi-suv-pickup-voyah"
+      },
+      "enums": {
+        "Araç Durumu": {
+          "multi": true,
+          "options": {
+            "Sıfır": "1252388",
+            "Yurtdışından İthal Sıfır": "1252389",
+            "İkinci El": "1252390"
+          },
+          "param": "a113988"
+        },
+        "Ağır Hasar Kayıtlı": {
+          "multi": true,
+          "options": {
+            "Evet": "1263361",
+            "Hayır": "1263360"
+          },
+          "param": "a116446"
+        },
+        "Hızlı Şarj Süresi": {
+          "multi": true,
+          "options": {
+            "0-45 dk": "1308747",
+            "46-60 dk": "1308746",
+            "61-90 dk": "1308745",
+            "91 dk ve üzeri": "1308744"
+          },
+          "param": "a121201"
+        },
+        "Kapı": {
+          "multi": true,
+          "options": {
+            "2": "278682",
+            "3": "33627",
+            "4": "210087",
+            "5": "33628"
+          },
+          "param": "a280"
+        },
+        "Kasa Tipi": {
+          "multi": true,
+          "options": {
+            "Crossover": "1209954",
+            "Pickup": "1209952",
+            "SUV": "1209956"
+          },
+          "param": "a107181"
+        },
+        "Kimden": {
+          "multi": false,
+          "options": {
+            "Galeriden": "33632",
+            "Sahibinden": "33631",
+            "Yetkili Bayiden": "1160381"
+          },
+          "param": "a448"
+        },
+        "Motor Gücü": {
+          "multi": true,
+          "options": {
+            "101 - 125 hp": "74371",
+            "126 - 150 hp": "74372",
+            "151 - 175 hp": "74373",
+            "176 - 200 hp": "74374",
+            "201 - 225 hp": "74375",
+            "226 - 250 hp": "74376",
+            "251 - 275 hp": "74377",
+            "276 - 300 hp": "74378",
+            "301 - 325 hp": "74379",
+            "326 - 350 hp": "74380",
+            "351 - 375 hp": "74381",
+            "376 - 400 hp": "74382",
+            "401 - 425 hp": "74383",
+            "426 - 450 hp": "74384",
+            "451 - 475 hp": "74385",
+            "476 - 500 hp": "74386",
+            "50 hp'ye kadar": "1110290",
+            "501 - 525 hp": "74387",
+            "51 - 75 hp": "1110288",
+            "526 - 550 hp": "74388",
+            "551 - 575 hp": "74389",
+            "576 - 600 hp": "74390",
+            "601 hp ve üzeri": "74391",
+            "76 - 100 hp": "74370"
+          },
+          "param": "a2321"
+        },
+        "Motor Hacmi": {
+          "multi": true,
+          "options": {
+            "1300 cm3' e kadar": "620146",
+            "1301 – 1600 cm3": "62629",
+            "1601 - 1800 cm3": "62630",
+            "1801 – 2000 cm3": "62631",
+            "2001 – 2500 cm3": "62632",
+            "2501 – 3000 cm3": "62633",
+            "3001 – 3500 cm3": "62634",
+            "3501 - 4000 cm3": "62635",
+            "4001 - 5000 cm3": "62636",
+            "5001 - 6000 cm3": "1131548",
+            "6001 cm3 ve üzeri": "1131550"
+          },
+          "param": "a2319"
+        },
+        "Plaka / Uyruk": {
+          "multi": true,
+          "options": {
+            "Mavi (MA) Plakalı": "142784",
+            "Türkiye (TR) Plakalı": "143039",
+            "Özel Plaka": "1308622"
+          },
+          "param": "a9623"
+        },
+        "Renk": {
+          "multi": true,
+          "options": {
+            "Bej": "654790",
+            "Beyaz": "33787",
+            "Bordo": "33794",
+            "Füme": "1104894",
+            "Gri": "33785",
+            "Gümüş Gri": "210127",
+            "Kahverengi": "33796",
+            "Kırmızı": "33788",
+            "Lacivert": "33790",
+            "Mavi": "33792",
+            "Mor": "47348",
+            "Pembe": "654450",
+            "Sarı": "33791",
+            "Siyah": "33786",
+            "Turuncu": "33797",
+            "Yeşil": "33789",
+            "Şampanya": "675108"
+          },
+          "param": "a275"
+        },
+        "Servis Garantisi": {
+          "multi": true,
+          "options": {
+            "Evet": "675082",
+            "Hayır": "675084"
+          },
+          "param": "a87472"
+        },
+        "Takaslı": {
+          "multi": false,
+          "options": {
+            "Evet": "yes",
+            "Hayır": "no"
+          },
+          "param": "exchange"
+        },
+        "Vites": {
+          "multi": true,
+          "options": {
+            "Manuel": "33626",
+            "Otomatik": "33625"
+          },
+          "param": "a279"
+        },
+        "Yakıt / Motor Tipi": {
+          "multi": true,
+          "options": {
+            "Benzin": "398",
+            "Benzin (Hafif Hibrit)": "1312759",
+            "Benzin (Hibrit)": "1312760",
+            "Benzin (LPG)": "50911",
+            "Benzin (Plug-in Hibrit)": "1312761",
+            "Dizel": "400",
+            "Dizel (Hafif Hibrit)": "1312758",
+            "Elektrik": "1234143"
+          },
+          "param": "a287"
+        },
+        "Çekiş": {
+          "multi": true,
+          "options": {
+            "4x2 (Arkadan İtişli)": "1105164",
+            "4x2 (Önden Çekişli)": "1105162",
+            "4x4": "10122"
+          },
+          "param": "a95938"
+        },
+        "İlan Tarihi": {
+          "multi": false,
+          "options": {
+            "Son 15 gün içinde": "15days",
+            "Son 24 saat": "1day",
+            "Son 3 gün içinde": "3days",
+            "Son 30 gün içinde": "30days",
+            "Son 7 gün içinde": "7days"
+          },
+          "param": "date"
+        }
+      },
+      "filters": {
+        "Fiyat": {
+          "max": "",
+          "min": "",
+          "param": "price",
+          "type": "CURRENCY"
+        },
+        "KM": {
+          "max": "1000000",
+          "min": "0",
+          "param": "a276",
+          "type": "LONG"
+        },
+        "Menzil": {
+          "max": "999",
+          "min": "50",
+          "param": "a119802",
+          "type": "LONG"
+        },
+        "Yıl": {
+          "max": "2026",
+          "min": "1970",
+          "param": "a277",
+          "type": "LONG"
+        }
+      },
+      "flags": {
+        "Boya, Değişen Parça": {
+          "Boyasız": "unpaintedParts",
+          "Değişensiz": "unchangingTracks"
+        },
+        "Fotoğraf, Video": {
+          "Klipli ilanlar": "hasClip",
+          "Videolu ilanlar": "hasVideo"
+        }
+      },
+      "label": "Arazi, SUV & Pickup",
+      "models": {
+        "Fiat": {
+          "complete": true,
+          "models": {
+            "500 X": "arazi-suv-pickup-fiat-500-x",
+            "600": "arazi-suv-pickup-fiat-600",
+            "600e": "arazi-suv-pickup-fiat-600e",
+            "Egea Cross": "arazi-suv-pickup-fiat-egea-cross",
+            "Freemont": "arazi-suv-pickup-fiat-freemont",
+            "Fullback": "arazi-suv-pickup-fiat-fullback",
+            "Grande Panda": "arazi-suv-pickup-fiat-grande-panda",
+            "Grande Panda Electric": "arazi-suv-pickup-fiat-grande-panda-electric",
+            "Sedici": "arazi-suv-pickup-fiat-sedici"
+          }
+        },
+        "Renault": {
+          "complete": true,
+          "models": {
+            "Austral": "arazi-suv-pickup-renault-austral",
+            "Boreal": "arazi-suv-pickup-renault-boreal",
+            "Captur": "arazi-suv-pickup-renault-captur",
+            "Duster": "arazi-suv-pickup-renault-duster",
+            "Kadjar": "arazi-suv-pickup-renault-kadjar",
+            "Koleos": "arazi-suv-pickup-renault-koleos",
+            "Rafale": "arazi-suv-pickup-renault-rafale",
+            "Scenic RX4": "arazi-suv-pickup-renault-scenic-rx4"
+          }
+        },
+        "Volkswagen": {
+          "complete": true,
+          "models": {
+            "Amarok": "arazi-suv-pickup-volkswagen-amarok",
+            "ID.4": "arazi-suv-pickup-volkswagen-id.4",
+            "ID.6": "arazi-suv-pickup-volkswagen-id.6",
+            "T-Cross": "arazi-suv-pickup-volkswagen-t-cross",
+            "T-Roc": "arazi-suv-pickup-volkswagen-t-roc",
+            "Taigo": "arazi-suv-pickup-volkswagen-taigo",
+            "Tayron": "arazi-suv-pickup-volkswagen-tayron",
+            "Tiguan": "arazi-suv-pickup-volkswagen-tiguan",
+            "Tiguan AllSpace": "arazi-suv-pickup-volkswagen-tiguan-allspace",
+            "Touareg": "arazi-suv-pickup-volkswagen-touareg"
+          }
+        }
+      },
+      "units": {
+        "price_currency": {
+          "EUR": "3",
+          "GBP": "4",
+          "TL": "1",
+          "USD": "2"
+        }
+      }
+    },
+    "otomobil": {
+      "brands": {
+        "Abarth": "abarth",
+        "Aion": "aion",
+        "Alfa Romeo": "alfa-romeo",
+        "Alpine": "alpine",
+        "Anadol": "anadol",
+        "Arora": "arora",
+        "Aston Martin": "aston-martin",
+        "Audi": "audi",
+        "BMW": "bmw",
+        "BYD": "byd",
+        "Bajaj": "bajaj",
+        "Bentley": "bentley",
+        "Buick": "buick",
+        "Cadillac": "cadillac",
+        "Chery": "chery",
+        "Chevrolet": "chevrolet",
+        "Chrysler": "chrysler",
+        "Citroen": "citroen",
+        "Cupra": "cupra",
+        "DS Automobiles": "ds-automobiles",
+        "Dacia": "dacia",
+        "Daewoo": "daewoo",
+        "Daihatsu": "daihatsu",
+        "Dodge": "dodge",
+        "Eagle": "eagle",
+        "Ferrari": "ferrari",
+        "Fiat": "fiat",
+        "Ford": "ford",
+        "Geely": "geely",
+        "Honda": "honda",
+        "Hyundai": "hyundai",
+        "I-GO": "i-go",
+        "Ikco": "ikco",
+        "Infiniti": "infiniti",
+        "Jaguar": "jaguar",
+        "Jiayuan": "jiayuan",
+        "Kia": "kia",
+        "Kuba": "kuba",
+        "Lada": "lada",
+        "Lamborghini": "lamborghini",
+        "Lancia": "lancia",
+        "Leapmotor": "leapmotor",
+        "Lexus": "lexus",
+        "Lincoln": "lincoln",
+        "Lotus": "lotus",
+        "Luqi": "luqi",
+        "MG": "mg",
+        "Marcos": "marcos",
+        "Maserati": "maserati",
+        "Mazda": "mazda",
+        "McLaren": "mclaren",
+        "Mercedes-Benz": "mercedes-benz",
+        "Mercury": "mercury",
+        "Micro": "micro",
+        "Mini": "mini",
+        "Mitsubishi": "mitsubishi",
+        "Morgan": "morgan",
+        "Motolux": "motolux",
+        "Nieve": "nieve",
+        "Nissan": "nissan",
+        "Opel": "opel",
+        "Ortimobil": "ortimobil",
+        "Peugeot": "peugeot",
+        "Plymouth": "plymouth",
+        "Polestar": "polestar",
+        "Pontiac": "pontiac",
+        "Porsche": "porsche",
+        "Proton": "proton",
+        "RKS": "rks",
+        "Rainwoll": "rainwoll",
+        "Reeder": "reeder",
+        "Regal Raptor": "regal-raptor",
+        "Relive": "relive",
+        "Renault": "renault",
+        "Rolls-Royce": "rolls-royce",
+        "Rover": "rover",
+        "Saab": "saab",
+        "Saipa": "saipa",
+        "Seat": "seat",
+        "Skoda": "skoda",
+        "Smart": "smart",
+        "Subaru": "subaru",
+        "Suzuki": "suzuki",
+        "TOGG": "togg",
+        "Tata": "tata",
+        "Tesla": "tesla",
+        "The London Taxi": "the-london-taxi",
+        "Tofaş": "tofas",
+        "Toyota": "toyota",
+        "Vanderhall": "vanderhall",
+        "Volkswagen": "volkswagen",
+        "Volta": "volta",
+        "Volvo": "volvo",
+        "XEV": "xev",
+        "Yuki": "yuki",
+        "Zlin Motors": "zlin-motors"
+      },
+      "enums": {
+        "Araç Durumu": {
+          "multi": true,
+          "options": {
+            "Sıfır": "1252387",
+            "Yurtdışından İthal Sıfır": "1252386",
+            "İkinci El": "1252385"
+          },
+          "param": "a113987"
+        },
+        "Ağır Hasar Kayıtlı": {
+          "multi": true,
+          "options": {
+            "Evet": "1263353",
+            "Hayır": "1263354"
+          },
+          "param": "a116445"
+        },
+        "Hızlı Şarj Süresi": {
+          "multi": true,
+          "options": {
+            "0-45 dk": "1308740",
+            "46-60 dk": "1308741",
+            "61-90 dk": "1308742",
+            "91 dk ve üzeri": "1308743"
+          },
+          "param": "a121200"
+        },
+        "Kasa Tipi": {
+          "multi": true,
+          "options": {
+            "Cabrio": "240",
+            "Coupe": "48626",
+            "Coupe 4 kapı": "1263542",
+            "Hatchback 3 kapı": "20",
+            "Hatchback 5 kapı": "62068",
+            "MPV": "1197465",
+            "Roadster": "1197466",
+            "Sedan": "250",
+            "Station Wagon": "19"
+          },
+          "param": "a8"
+        },
+        "Kimden": {
+          "multi": false,
+          "options": {
+            "Galeriden": "32475",
+            "Sahibinden": "32474",
+            "Yetkili Bayiden": "1160380"
+          },
+          "param": "a706"
+        },
+        "Motor Gücü": {
+          "multi": true,
+          "options": {
+            "101 - 125 HP": "74345",
+            "126 - 150 HP": "74346",
+            "151 - 175 HP": "74347",
+            "176 - 200 HP": "74348",
+            "201 - 225 HP": "74349",
+            "226 - 250 HP": "74350",
+            "251 - 275 HP": "74351",
+            "276 - 300 HP": "74352",
+            "301 - 325 HP": "74353",
+            "326 - 350 HP": "74354",
+            "351 - 375 HP": "74355",
+            "376 - 400 HP": "74356",
+            "401 - 425 HP": "74357",
+            "426 - 450 HP": "74358",
+            "451 - 475 HP": "74359",
+            "476 - 500 HP": "74360",
+            "50 HP'ye kadar": "1096156",
+            "501 - 525 HP": "74361",
+            "51 - 75 HP": "1096158",
+            "526 - 550 HP": "74362",
+            "551 - 575 HP": "74363",
+            "576 - 600 HP": "74364",
+            "601 HP ve üzeri": "74365",
+            "76 - 100 HP": "74344"
+          },
+          "param": "a2320"
+        },
+        "Motor Hacmi": {
+          "multi": true,
+          "options": {
+            "1300 cm3' e kadar": "51977",
+            "1301 - 1600 cm3": "1118042",
+            "1601 - 1800 cm3": "51979",
+            "1801 - 2000 cm3": "51980",
+            "2001 - 2500 cm3": "51981",
+            "2501 - 3000 cm3": "51982",
+            "3001 - 3500 cm3": "51983",
+            "3501 - 4000 cm3": "51984",
+            "4001 - 4500 cm3": "51985",
+            "4501 - 5000 cm3": "74366",
+            "5001 - 5500 cm3": "74367",
+            "5501 - 6000 cm3": "74368",
+            "6001 cm3 ve üzeri": "74369"
+          },
+          "param": "a1864"
+        },
+        "Plaka / Uyruk": {
+          "multi": true,
+          "options": {
+            "Mavi (MA) Plakalı": "142778",
+            "Türkiye (TR) Plakalı": "143038",
+            "Özel Plaka": "1308621"
+          },
+          "param": "a9620"
+        },
+        "Renk": {
+          "multi": true,
+          "options": {
+            "Bej": "655354",
+            "Beyaz": "33611",
+            "Bordo": "33617",
+            "Füme": "658878",
+            "Gri": "33612",
+            "Gümüş Gri": "40948",
+            "Kahverengi": "33621",
+            "Kırmızı": "33613",
+            "Lacivert": "33615",
+            "Mavi": "33610",
+            "Mor": "33624",
+            "Pembe": "40167",
+            "Sarı": "33614",
+            "Siyah": "33616",
+            "Turkuaz": "44926",
+            "Turuncu": "40148",
+            "Yeşil": "33618",
+            "Şampanya": "675106"
+          },
+          "param": "a3"
+        },
+        "Servis Garantisi": {
+          "multi": true,
+          "options": {
+            "Evet": "72906",
+            "Hayır": "72907"
+          },
+          "param": "a4054"
+        },
+        "Takaslı": {
+          "multi": false,
+          "options": {
+            "Evet": "yes",
+            "Hayır": "no"
+          },
+          "param": "exchange"
+        },
+        "Vites": {
+          "multi": true,
+          "options": {
+            "Manuel": "32467",
+            "Otomatik": "32466"
+          },
+          "param": "a6"
+        },
+        "Yakıt / Motor Tipi": {
+          "multi": true,
+          "options": {
+            "Benzin": "21",
+            "Benzin (Hafif Hibrit)": "1312755",
+            "Benzin (Hibrit)": "1312756",
+            "Benzin (LPG)": "50276",
+            "Benzin (Plug-in Hibrit)": "1312757",
+            "Dizel": "22",
+            "Dizel (Hafif Hibrit)": "1312754",
+            "Elektrik": "1202111"
+          },
+          "param": "a17"
+        },
+        "Çekiş": {
+          "multi": true,
+          "options": {
+            "4WD (Sürekli)": "136271",
+            "AWD (Elektronik)": "136272",
+            "Arkadan İtiş": "136270",
+            "Önden Çekiş": "136269"
+          },
+          "param": "a9213"
+        },
+        "İlan Tarihi": {
+          "multi": false,
+          "options": {
+            "Son 15 gün içinde": "15days",
+            "Son 24 saat": "1day",
+            "Son 3 gün içinde": "3days",
+            "Son 30 gün içinde": "30days",
+            "Son 7 gün içinde": "7days"
+          },
+          "param": "date"
+        }
+      },
+      "filters": {
+        "Fiyat": {
+          "max": "",
+          "min": "",
+          "param": "price",
+          "type": "CURRENCY"
+        },
+        "KM": {
+          "max": "1000000",
+          "min": "0",
+          "param": "a4",
+          "type": "LONG"
+        },
+        "Menzil": {
+          "max": "999",
+          "min": "50",
+          "param": "a119799",
+          "type": "LONG"
+        },
+        "Yıl": {
+          "max": "2026",
+          "min": "1970",
+          "param": "a5",
+          "type": "LONG"
+        }
+      },
+      "flags": {
+        "Boya, Değişen Parça": {
+          "Boyasız": "unpaintedParts",
+          "Değişensiz": "unchangingTracks"
+        },
+        "Fotoğraf, Video": {
+          "Klipli ilanlar": "hasClip",
+          "Videolu ilanlar": "hasVideo"
+        }
+      },
+      "label": "Otomobil",
+      "models": {
+        "Fiat": {
+          "complete": true,
+          "models": {
+            "124 Spider": "fiat-124-spider",
+            "126 Bis": "fiat-126-bis",
+            "500 Ailesi": "fiat-500-ailesi",
+            "Albea": "fiat-albea",
+            "Brava": "fiat-brava",
+            "Bravo": "fiat-bravo",
+            "Coupe": "fiat-coupe",
+            "Egea": "fiat-egea",
+            "Idea": "fiat-idea",
+            "Linea": "fiat-linea",
+            "Marea": "fiat-marea",
+            "Mirafiori": "fiat-mirafiori",
+            "Palio": "fiat-palio",
+            "Panda": "fiat-panda",
+            "Punto": "fiat-punto",
+            "Siena": "fiat-siena",
+            "Stilo": "fiat-stilo",
+            "Tempra": "fiat-tempra",
+            "Tipo": "fiat-tipo",
+            "Topolino": "fiat-topolino",
+            "Uno": "fiat-uno"
+          }
+        },
+        "Renault": {
+          "complete": true,
+          "models": {
+            "Clio": "renault-clio",
+            "Espace": "renault-espace",
+            "Fluence": "renault-fluence",
+            "Fluence Z.E.": "renault-fluence-z.e.",
+            "Grand Modüs": "renault-grand-modus",
+            "Grand Scenic": "renault-grand-scenic",
+            "Laguna": "renault-laguna",
+            "Latitude": "renault-latitude",
+            "Megane": "renault-megane",
+            "Megane E-Tech": "renault-megane-e-tech",
+            "Modus": "renault-modus",
+            "R 11": "renault-r-11",
+            "R 12": "renault-r-12",
+            "R 19": "renault-r-19",
+            "R 21": "renault-r-21",
+            "R 25": "renault-r-25",
+            "R 5": "renault-r-5",
+            "R 9": "renault-r-9",
+            "R5 E-Tech": "renault-r5-e-tech",
+            "Safrane": "renault-safrane",
+            "Scenic": "renault-scenic",
+            "Scenic EV": "renault-scenic-ev",
+            "Symbol": "renault-symbol",
+            "Taliant": "renault-taliant",
+            "Talisman": "renault-talisman",
+            "Twingo": "renault-twingo",
+            "Twizy": "renault-twizy",
+            "Vel Satis": "renault-vel-satis",
+            "ZOE": "renault-zoe"
+          }
+        },
+        "Skoda": {
+          "complete": false,
+          "models": {
+            "Scala": "skoda-scala"
+          }
+        },
+        "Volkswagen": {
+          "complete": true,
+          "models": {
+            "Arteon": "volkswagen-arteon",
+            "Beetle": "volkswagen-beetle",
+            "Bora": "volkswagen-bora",
+            "EOS": "volkswagen-eos",
+            "FOX": "volkswagen-fox",
+            "Golf": "volkswagen-golf",
+            "ID.3": "volkswagen-id.3",
+            "ID.7": "volkswagen-id.7",
+            "Jetta": "volkswagen-jetta",
+            "Lupo": "volkswagen-lupo",
+            "Passat": "volkswagen-passat",
+            "Passat Alltrack": "volkswagen-passat-alltrack",
+            "Passat Variant": "volkswagen-passat-variant",
+            "Phaeton": "volkswagen-phaeton",
+            "Polo": "volkswagen-polo",
+            "Scirocco": "volkswagen-scirocco",
+            "Sharan": "volkswagen-sharan",
+            "Touran": "volkswagen-touran",
+            "Up Club": "volkswagen-up-club",
+            "VW CC": "volkswagen-vw-cc",
+            "Vento": "volkswagen-vento"
+          }
+        }
+      },
+      "units": {
+        "price_currency": {
+          "EUR": "3",
+          "GBP": "4",
+          "TL": "1",
+          "USD": "2"
+        }
+      }
+    }
+  },
+  "cities": {
+    "Adana": "1",
+    "Adıyaman": "2",
+    "Afyonkarahisar": "3",
+    "Aksaray": "68",
+    "Amasya": "5",
+    "Ankara": "6",
+    "Antalya": "7",
+    "Ardahan": "75",
+    "Artvin": "8",
+    "Aydın": "9",
+    "Ağrı": "4",
+    "Balıkesir": "10",
+    "Bartın": "74",
+    "Batman": "72",
+    "Bayburt": "69",
+    "Bilecik": "11",
+    "Bingöl": "12",
+    "Bitlis": "13",
+    "Bolu": "14",
+    "Burdur": "15",
+    "Bursa": "16",
+    "Denizli": "20",
+    "Diyarbakır": "21",
+    "Düzce": "81",
+    "Edirne": "22",
+    "Elazığ": "23",
+    "Erzincan": "24",
+    "Erzurum": "25",
+    "Eskişehir": "26",
+    "Gaziantep": "27",
+    "Giresun": "28",
+    "Gümüşhane": "29",
+    "Hakkari": "30",
+    "Hatay": "31",
+    "Isparta": "32",
+    "Iğdır": "76",
+    "Kahramanmaraş": "46",
+    "Karabük": "78",
+    "Karaman": "70",
+    "Kars": "36",
+    "Kastamonu": "37",
+    "Kayseri": "38",
+    "Kilis": "79",
+    "Kocaeli": "41",
+    "Konya": "42",
+    "Kütahya": "43",
+    "Kırklareli": "39",
+    "Kırıkkale": "71",
+    "Kırşehir": "40",
+    "Malatya": "44",
+    "Manisa": "45",
+    "Mardin": "47",
+    "Mersin": "33",
+    "Muğla": "48",
+    "Muş": "49",
+    "Nevşehir": "50",
+    "Niğde": "51",
+    "Ordu": "52",
+    "Osmaniye": "80",
+    "Rize": "53",
+    "Sakarya": "54",
+    "Samsun": "55",
+    "Siirt": "56",
+    "Sinop": "57",
+    "Sivas": "58",
+    "Tekirdağ": "59",
+    "Tokat": "60",
+    "Trabzon": "61",
+    "Tunceli": "62",
+    "Uşak": "64",
+    "Van": "65",
+    "Yalova": "77",
+    "Yozgat": "66",
+    "Zonguldak": "67",
+    "Çanakkale": "17",
+    "Çankırı": "18",
+    "Çorum": "19",
+    "İstanbul": "34",
+    "İzmir": "35",
+    "Şanlıurfa": "63",
+    "Şırnak": "73"
+  }
+}

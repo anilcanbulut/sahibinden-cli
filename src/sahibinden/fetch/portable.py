@@ -227,16 +227,35 @@ def load_session(path: Path | None = None) -> dict | None:
     return session if isinstance(session.get("cookies"), list) else None
 
 
-def seed_context(ctx, session: dict | None = None, *, log=None) -> int:
+def seed_context(ctx, session: dict | None = None, *, profile_dir=None,
+                 log=None) -> int:
     """Push an imported session's cookies into a fresh browser context.
 
     Returns how many were applied. Expired cookies are dropped here rather than
     at import, so a file that sat on a laptop overnight degrades gracefully
     instead of failing at the point of transfer.
+
+    Once per imported file and profile. After that the profile holds the
+    cookies and whatever the site sets from then on, and pushing the file's
+    copies back in on every launch would roll each of those back to the older
+    value. A profile that has lost its sahibinden cookies altogether is seeded
+    again. (The shortest-lived sign-in cookie, ``st``, expires 24 hours after
+    sign-in and was not renewed by searching, so a file older than that is
+    missing it.)
     """
     session = session or load_session()
     if not session:
         return 0
+
+    marker = str(profile_dir) if profile_dir else None
+    if marker and marker in (session.get("seeded_into") or []):
+        try:
+            holds_session = any(COOKIE_DOMAIN_MARKER in (c.get("domain") or "")
+                                for c in ctx.cookies())
+        except Exception:
+            holds_session = False
+        if holds_session:
+            return 0
 
     now = time.time()
     live = [c for c in session["cookies"]
@@ -250,6 +269,14 @@ def seed_context(ctx, session: dict | None = None, *, log=None) -> int:
         if log:
             log(f"  could not seed cookies: {exc}")
         return 0
+
+    if marker:
+        session["seeded_into"] = sorted({*(session.get("seeded_into") or []), marker})
+        try:
+            DEFAULT_SESSION_PATH.write_text(json.dumps(session, indent=2),
+                                            encoding="utf-8")
+        except OSError:
+            pass  # worst case the next launch seeds again, as it always used to
 
     if log:
         log(f"  seeded {len(live)} cookies from {DEFAULT_SESSION_PATH.name}")

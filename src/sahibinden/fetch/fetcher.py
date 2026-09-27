@@ -63,6 +63,27 @@ def _store_raw(url: str, html: str, *, failed: bool = False) -> Path:
     return path
 
 
+def _settled_content(page, attempts: int = 3) -> str:
+    """The page's HTML once it has stopped navigating on its own.
+
+    Some pages move on right after DOMContentLoaded — a client-side redirect
+    to a listing's current address, or an interstitial that reloads itself —
+    and reading the content mid-flight raises. That navigation is the page's
+    own, not a new request of ours, so waiting it out is not a retry.
+    """
+    for attempt in range(attempts):
+        try:
+            return page.content()
+        except Exception as exc:
+            if "navigating" not in str(exc) or attempt == attempts - 1:
+                raise
+            try:
+                page.wait_for_load_state("domcontentloaded", timeout=30_000)
+            except Exception:
+                pass
+    raise RuntimeError("page never settled")
+
+
 def _dwell(page) -> None:
     """Look at the page like a person would before navigating away."""
     page.wait_for_timeout(int(random.uniform(MIN_DWELL, MAX_DWELL) * 1000))
@@ -132,9 +153,17 @@ def fetch_pages(
             response = page.goto(url, wait_until="domcontentloaded", timeout=60_000)
             status = response.status if response else 0
             headers = dict(response.headers) if response else {}
-            html = page.content()
-
-            verdict = assess(status, headers, html, expect=expect)
+            try:
+                html = _settled_content(page)
+                verdict = assess(status, headers, html, expect=expect)
+            except Exception as exc:
+                # The request went out either way, so it is still counted and
+                # still paces the next one; it just cannot be judged.
+                html = ""
+                verdict = Assessment(Verdict.CHANGED, None, status,
+                                     f"could not read the page: {str(exc)[:120]}")
+            if page.url.split("#")[0] != url:
+                print(f"     (landed on {page.url})", flush=True)
             breaker.record(verdict)
 
             raw_path = _store_raw(url, html, failed=not verdict.is_usable)
@@ -159,6 +188,9 @@ def fetch_pages(
             # end the run without poisoning tomorrow's.
             if verdict.should_halt:
                 print("     !! breaker TRIPPED — stopping, no retry", flush=True)
+                break
+            if verdict.verdict is Verdict.EMPTY:
+                print("     -- no listings match, nothing further to fetch", flush=True)
                 break
             if not verdict.is_usable:
                 print("     -- unusable response, ending run (breaker not tripped)", flush=True)

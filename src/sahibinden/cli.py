@@ -20,16 +20,17 @@ import json
 import statistics
 import sys
 from pathlib import Path
+from urllib.parse import parse_qsl, urlparse
 
 from .config import CONFIG_PATH, Config, config, set_config
-from .crawl import fetch_details, sweep
+from .crawl import fetch_details, learn_models, sweep
 from .panels import (PANEL_GROUPS, PANEL_LABELS, PANELS, STATUSES,
                      build_requirements, describe)
 from .parse.detail import parse_detail
 from .fetch.fetcher import BREAKER_PATH, RAW_DIR
 from .fetch.guard import Breaker
 from .store import Store
-from .taxonomy import (CURRENCY_PARAM, ENUM_FLAGS, FLAG_FILTERS, Taxonomy,
+from .taxonomy import (CATEGORY_NAMES, ENUM_FLAGS, FLAG_FILTERS, Taxonomy,
                        apply_post_filters)
 
 EXIT_OK, EXIT_ERROR, EXIT_REFUSED = 0, 1, 2
@@ -75,33 +76,60 @@ def print_resolve_error(resolved: dict, as_json: bool) -> None:
 
 def cmd_search(args) -> int:
     """Resolve a query to a sahibinden URL, sweep it, store and summarise."""
-    tax = Taxonomy()
+    attach = getattr(args, "attach", False)
 
     if args.url:
         url, resolved, post = args.url, {"url": args.url, "source": "explicit"}, {}
+        # The order is whatever the pasted URL asked for, not --sort's default.
+        order = (dict(parse_qsl(urlparse(args.url).query)).get("sorting")
+                 or "sahibinden's default order")
     else:
         if not args.brand:
             print("error: need --brand (or --url). See: sahibinden brands", file=sys.stderr)
             return EXIT_ERROR
-        resolved = tax.build_url(
-            args.brand, args.model, city=args.city, district=args.district,
-            min_year=args.min_year, max_year=args.max_year,
-            min_km=args.min_km, max_km=args.max_km,
-            min_price=args.min_price, max_price=args.max_price,
-            currency=args.currency, keyword=args.keyword,
-            keyword_in_description=args.keyword_in_description,
-            undamaged_only=args.undamaged, sort=args.sort,
-            flags={name: getattr(args, name, False) for name in FLAG_FILTERS},
-            enums={flag: getattr(args, flag, None) for flag in ENUM_FLAGS},
-        )
+
+        def resolve():
+            return Taxonomy().build_url(
+                args.brand, args.model, category=args.category,
+                city=args.city, district=args.district,
+                min_year=args.min_year, max_year=args.max_year,
+                min_km=args.min_km, max_km=args.max_km,
+                min_price=args.min_price, max_price=args.max_price,
+                currency=args.currency, keyword=args.keyword,
+                keyword_in_description=args.keyword_in_description,
+                undamaged_only=args.undamaged, sort=args.sort,
+                flags={name: getattr(args, name, False) for name in FLAG_FILTERS},
+                enums={flag: getattr(args, flag, None) for flag in ENUM_FLAGS},
+            )
+
+        resolved = resolve()
+        if resolved.get("learn"):
+            # The model can only be placed after reading the brand's own page
+            # once. That costs a request or two, so it is said out loud.
+            learned = learn_models(resolved["learn"], attach=attach)
+            if learned.get("error"):
+                print(f"refused: could not read {resolved['brand']}'s model list: "
+                      f"{learned['error']} {learned.get('reason', '')}", file=sys.stderr)
+                return EXIT_ERROR if learned["error"] == "not_found" else EXIT_REFUSED
+            resolved = resolve()
+        if resolved.get("learn"):
+            resolved = {"error": f"could not place model {args.model!r} "
+                                 f"under {resolved['brand']}"}
         if resolved.get("error"):
             print_resolve_error(resolved, args.json)
             return EXIT_ERROR
         url, post = resolved["url"], resolved["post_filters"]
+        order = args.sort
 
     result = sweep(url, max_pages=args.pages or config.default_pages,
-                   layout=args.layout, attach=getattr(args, "attach", False))
+                   layout=args.layout, attach=attach)
     if result.get("error"):
+        if result["error"] == "not_found":
+            # A wrong path is the caller's to fix, not a reason to wait.
+            print(f"error: sahibinden has no page at {url}\n"
+                  "       check --district (it is not validated), or the "
+                  "URL you pasted", file=sys.stderr)
+            return EXIT_ERROR
         print(f"refused: {result['error']} {result.get('reason','')}", file=sys.stderr)
         return EXIT_REFUSED
 
@@ -150,6 +178,12 @@ def cmd_search(args) -> int:
     def human(d):
         r = d["resolved"]
         print(f"\n  url            : {r['url']}")
+        if r.get("category_label"):
+            print(f"  category       : {r['category_label']}")
+        if r.get("other_categories"):
+            print(f"  NOTE           : {r['brand']} is also listed under "
+                  f"{', '.join(r['other_categories'])} — a separate search "
+                  f"(--category)")
         if r.get("model_is_guess"):
             print(f"  model slug     : guessed from {r['model']!r}; "
                   f"{'confirmed by results' if d['total_results'] else 'NO RESULTS — check spelling'}")
@@ -161,7 +195,7 @@ def cmd_search(args) -> int:
         if (d.get("pages_available") or 0) > (d.get("pages_fetched") or 0):
             seen = (d["pages_fetched"] or 0) * 20
             print(f"  NOTE           : partial sweep — these are the first ~{seen} "
-                  f"of {d['total_results']} by {args.sort}, not the whole market.")
+                  f"of {d['total_results']} by {order}, not the whole market.")
             print(f"                   Narrow with --min-price/--max-price/"
                   f"--min-year/--max-km/--city, or raise --pages.")
         for group, labels in (r.get("filters_applied") or {}).items():
@@ -457,12 +491,16 @@ def cmd_status(args) -> int:
 
 def cmd_brands(args) -> int:
     tax = Taxonomy()
-    names = sorted(tax.brands)
+    known = tax.brands
+    names = sorted(known)
     if args.filter:
         needle = args.filter.lower()
         names = [n for n in names if needle in n.lower()]
-    data = {"count": len(names), "brands": names}
-    emit(data, args.json, lambda d: print("  " + "\n  ".join(d["brands"])))
+    data = {"count": len(names), "brands": names,
+            "categories": {n: [CATEGORY_NAMES.get(k, k) for k in known[n]]
+                           for n in names}}
+    emit(data, args.json, lambda d: print("\n".join(
+        f"  {n:<22}{', '.join(d['categories'][n])}" for n in d["brands"])))
     return EXIT_OK
 
 
@@ -925,19 +963,27 @@ def cmd_sql(args) -> int:
 def cmd_filters(args) -> int:
     """List every filter harvested from sahibinden's own search form."""
     tax = Taxonomy()
+    keys, error = tax.resolve_category(args.category or "car")
+    if error:
+        print_resolve_error(error, args.json)
+        return EXIT_ERROR
+    key = keys[0]
+    cat = tax.categories[key]
     groups = {}
-    for flag, group in ENUM_FLAGS.items():
-        spec = tax.enums.get(group)
+    for flag in ENUM_FLAGS:
+        group = tax.enum_group(flag, key)
+        spec = cat["enums"].get(group)
         if spec:
             groups[flag] = {"group": group, "param": spec["param"],
                             "multi": bool(spec.get("multi")),
                             "options": sorted(spec["options"])}
     flags = {}
     for name, param in FLAG_FILTERS.items():
-        flags[name] = {"param": param, "label": tax.flag_label(param),
-                       "harvested": tax.flag_label(param) is not None}
-    data = {"ranges": tax.filters, "enums": groups, "flags": flags,
-            "units": tax.units,
+        label = tax.flag_label(param, key)
+        flags[name] = {"param": param, "label": label, "harvested": label is not None}
+    data = {"category": key, "category_label": tax.category_label(key),
+            "ranges": cat["filters"], "enums": groups, "flags": flags,
+            "units": cat["units"],
             "text": {"keyword": "--keyword (query_text)",
                      "keyword_in_description": "--keyword-in-description (query_desc)"},
             "location": {"city": "il — matched against sahibinden's own list",
@@ -945,6 +991,10 @@ def cmd_filters(args) -> int:
                                      "whether the search returns anything"}}
 
     def human(d):
+        others = [CATEGORY_NAMES.get(k, k) for k in tax.resolve_category(None)[0]
+                  if k != d["category"]]
+        print(f"\n  {d['category_label']} — the ids differ per category"
+              + (f"; see also --category {' / '.join(others)}" if others else ""))
         print("\n  numeric ranges")
         for label, spec in d["ranges"].items():
             bounds = (f"  ({spec['min']}-{spec['max']})"
@@ -987,8 +1037,10 @@ def cmd_harvest(args) -> int:
     200 and a filtered-looking page. So a wrong guess produces confidently
     wrong numbers instead of an error, and guessing is never worth it.
 
-    Search pages are the source — a detail page carries the brand and province
-    dropdowns but no facets, so both are scanned and merged.
+    Search pages are the source: each is filed under the category its
+    sidebar names, since the ids differ per category. A detail page adds the
+    province list. Searching does this as it goes; this command re-reads pages
+    already on disk.
     """
     tax = Taxonomy()
     sources = [Path(x) for x in (args.path or [])] or [SAMPLES_DIR, RAW_DIR]
@@ -1000,8 +1052,8 @@ def cmd_harvest(args) -> int:
         elif source.exists():
             files.append(source)
 
-    totals = {"brands": 0, "cities": 0, "filters": 0, "enums": 0,
-              "flags": 0, "units": 0}
+    totals = {"cities": 0, "brands": 0, "models": 0, "filters": 0,
+              "enums": 0, "flags": 0, "units": 0}
     scanned, failed = 0, []
     for path in files:
         try:
@@ -1023,15 +1075,24 @@ def cmd_harvest(args) -> int:
         "failed": failed,
         "saved_to": None if args.dry_run else str(tax.path),
         "vocabulary": {
-            "brands": len(tax.brands),
             "cities": len(tax.cities),
-            "ranges": sorted(tax.filters),
-            "enum_groups": {g: {"param": spec["param"],
-                                "values": len(spec["options"]),
-                                "multi": bool(spec.get("multi"))}
-                            for g, spec in sorted(tax.enums.items())},
-            "flag_groups": tax.flags,
-            "units": tax.units,
+            "categories": {
+                key: {
+                    "label": cat["label"],
+                    "brands": len(cat["brands"]),
+                    "model_lists": sorted(b for b, e in cat["models"].items()
+                                          if e.get("complete")),
+                    "ranges": {label: spec["param"]
+                               for label, spec in sorted(cat["filters"].items())},
+                    "enum_groups": {g: {"param": spec["param"],
+                                        "values": len(spec["options"]),
+                                        "multi": bool(spec.get("multi"))}
+                                    for g, spec in sorted(cat["enums"].items())},
+                    "flag_groups": cat["flags"],
+                    "units": cat["units"],
+                }
+                for key, cat in tax.categories.items()
+            },
         },
     }
 
@@ -1040,17 +1101,19 @@ def cmd_harvest(args) -> int:
               f"{', '.join(d['sources'])}")
         print("  added      : " + ", ".join(f"{k}={v}" for k, v in d["added"].items()))
         v = d["vocabulary"]
-        print(f"  brands {v['brands']}, cities {v['cities']}, "
-              f"ranges {', '.join(v['ranges']) or '-'}")
-        print("\n  filter groups")
-        for group, spec in v["enum_groups"].items():
-            print(f"    {group:<24}{spec['param']:<10}{spec['values']:>3} values"
-                  f"   {'checkbox (repeatable)' if spec['multi'] else 'single choice'}")
-        for group, options in v["flag_groups"].items():
-            print(f"    {group:<24}{'switches':<10}"
-                  f"   {', '.join(f'{k} -> {p}' for k, p in options.items())}")
-        for param, options in v["units"].items():
-            print(f"    {param:<24}{'units':<10}   {', '.join(sorted(options))}")
+        print(f"  cities {v['cities']}")
+        for key, c in v["categories"].items():
+            print(f"\n  {c['label']} ({key}): {c['brands']} brands, model lists "
+                  f"for {', '.join(c['model_lists']) or 'none yet'}")
+            print("    ranges   " + ", ".join(f"{k} {p}" for k, p in c["ranges"].items()))
+            for group, spec in c["enum_groups"].items():
+                print(f"    {group:<24}{spec['param']:<10}{spec['values']:>3} values"
+                      f"   {'checkbox (repeatable)' if spec['multi'] else 'single choice'}")
+            for group, options in c["flag_groups"].items():
+                print(f"    {group:<24}{'switches':<10}"
+                      f"   {', '.join(f'{k} -> {p}' for k, p in options.items())}")
+            for param, options in c["units"].items():
+                print(f"    {param:<24}{'units':<10}   {', '.join(sorted(options))}")
         for f in d["failed"]:
             print(f"  FAILED {f['file']}: {f['error']}")
         if d["saved_to"]:
@@ -1094,6 +1157,10 @@ def cmd_capabilities(args) -> int:
             "the current category falls back to filtering the parsed rows and "
             "is reported as post_filters, so a caller never silently gets a "
             "wider market than it asked for.",
+            "Cars, SUVs and minivans are separate sahibinden categories with "
+            "separate filter ids. 'search --model' places a model in its "
+            "category by reading the brand's model list (one request per "
+            "category, once per brand); --category picks one explicitly.",
             "Per-panel damage filters (--original, --not-changed, --panel) "
             "read the detail-page diagram, so they only answer for listings "
             "whose details have been fetched. Cars without one are reported as "
@@ -1163,7 +1230,11 @@ def build_parser() -> argparse.ArgumentParser:
                                    "sweep it, store the results and summarise prices.",
                        formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     p.add_argument("--brand", help="e.g. Volkswagen (fuzzy-matched; see 'brands')")
-    p.add_argument("--model", help="e.g. Golf (slug is guessed, verified by results)")
+    p.add_argument("--model", help="e.g. Golf, Tiguan. Matched against the brand's "
+                                   "own model list, which is fetched once per brand")
+    p.add_argument("--category", help="car, suv or minivan. Optional: a model is "
+                                      "placed in its own category automatically; "
+                                      "a brand on its own defaults to car")
     p.add_argument("--city", help="il — e.g. Ankara (see 'cities')")
     p.add_argument("--district", help="ilce — e.g. Cankaya; needs --city. Slug is "
                                       "guessed, verified by results")
@@ -1279,6 +1350,7 @@ def build_parser() -> argparse.ArgumentParser:
                        help="list available search filters and their values",
                        description="Every filter harvested from sahibinden's own "
                                    "search form, with the values each accepts.")
+    p.add_argument("--category", help="car (default), suv or minivan")
     p.set_defaults(func=cmd_filters)
 
     p = sub.add_parser("brands", parents=[shared], help="list known vehicle brands",

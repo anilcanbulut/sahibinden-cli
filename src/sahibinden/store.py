@@ -184,7 +184,7 @@ class Store:
         """
         from urllib.parse import urlparse
 
-        from .taxonomy import Taxonomy, slugify
+        from .taxonomy import Taxonomy
 
         pending = self.db.execute(
             "SELECT COUNT(*) FROM listings WHERE brand IS NULL"
@@ -192,10 +192,9 @@ class Store:
         if not pending:
             return
 
-        brand_slugs = sorted(
-            ((slugify(name), name) for name in Taxonomy().brands),
-            key=lambda pair: -len(pair[0]),
-        )
+        # Every category's brand paths, so an SUV sweep's
+        # 'arazi-suv-pickup-volkswagen-tiguan' resolves as well as a car's.
+        brand_slugs = Taxonomy().brand_paths()
         if not brand_slugs:
             return
 

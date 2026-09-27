@@ -262,7 +262,7 @@ def launch(
             ],
         )
         if seed:
-            seed_context(context, session)
+            seed_context(context, session, profile_dir=profile_dir.resolve())
         try:
             yield context
         finally:

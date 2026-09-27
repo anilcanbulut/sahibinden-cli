@@ -27,6 +27,7 @@ class Verdict(str, Enum):
     LOGIN_WALL = "login_wall"  # sign-in demanded; session problem, not detection
     EMPTY = "empty"            # 200 and no challenge, but no listings either
     CHANGED = "changed"        # 200, listings present, but markup shifted
+    NOT_FOUND = "not_found"    # the site's own 404 page — a wrong path, not a ban
 
 
 #: Header names that only appear when an anti-bot vendor is in the path.
@@ -51,6 +52,11 @@ BODY_MARKERS = [
     (re.compile(r"erişim engellendi|eri\w*im engellendi", re.I), "sahibinden"),
     (re.compile(r"robot olmad[ıi]ğ[ıi]n[ıi]z[ıi]", re.I), "sahibinden"),
     (re.compile(r"unusual traffic|olağan dışı trafik", re.I), "generic"),
+    # sahibinden's own block page, observed with HTTP 429: "Olağan dışı erişim
+    # tespit ettik... sitemize olağan dışı (otomatik) erişim". It shares its
+    # <title> ("Hata Sayfası") with the plain 404 page, so it has to be caught
+    # here, by its wording, before any status-based reading of that title.
+    (re.compile(r"ola[ğg]an ?d[ıi][şs][ıi] (\(otomatik\) )?eri[şs]im", re.I), "sahibinden"),
 ]
 
 #: sahibinden serves a sign-in page to cookieless sessions. Verified to affect a
@@ -64,6 +70,16 @@ LOGIN_WALL_MARKERS = [
     # is sahibinden's and undocumented; the parens, leading G and -NNNN tail
     # make it specific enough not to fire on listing text.
     re.compile(r"\(G[A-Z0-9]{6,10}-\d{4}\)"),
+]
+
+#: sahibinden's own 404 page: "Aradığınız sayfaya ulaşılamadı". It is small,
+#: so without this the size test below files it as a challenge: one misspelt
+#: path then trips a 90-minute cooldown and slows every request for a week.
+#: That happened. Matched on this sentence only — the page's title, "Hata
+#: Sayfası", is shared with the block page.
+NOT_FOUND_MARKERS = [
+    # The page wraps the second half in <strong>.
+    re.compile(r"arad[ıi]\w*n[ıi]z sayfaya\s*(?:<[^>]+>\s*)*ula[şs][ıi]lamad[ıi]", re.I),
 ]
 
 BLOCKING_STATUS = {401, 403, 405, 429, 503}
@@ -111,6 +127,12 @@ def assess(
             return Assessment(Verdict.CHALLENGED, vendor, status,
                               f"{vendor} marker in body")
 
+    # Only with a 404 status as well as the site's own wording: a challenge
+    # page never carries both, so this cannot excuse a real block.
+    if status == 404 and any(p.search(head) for p in NOT_FOUND_MARKERS):
+        return Assessment(Verdict.NOT_FOUND, "sahibinden", status,
+                          "sahibinden has no page at this address")
+
     # Checked before the size test: the sign-in page is a legitimately-sized
     # page, so a size heuristic would misfile it as a challenge.
     for pattern in LOGIN_WALL_MARKERS:
@@ -126,6 +148,13 @@ def assess(
 
     if expect == "search":
         if "searchResultsTable" not in body:
+            # A search that matches nothing is drawn with no results table at
+            # all, but it is still a search page: the form is there. Reading it
+            # as a markup change sent every too-narrow search and misspelt
+            # district to "markup changed", exit 2.
+            if 'id="searchResultsSearchForm"' in body:
+                return Assessment(Verdict.EMPTY, None, status,
+                                  "no listings match this search")
             return Assessment(Verdict.CHANGED, None, status,
                               "no #searchResultsTable — markup changed or not a results page")
         count = body.count("searchResultsItem")

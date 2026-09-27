@@ -23,3 +23,8 @@ sahibinden-cli = "sahibinden.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+# The committed brand, province and filter-id vocabulary, so a fresh install
+# can search before it has fetched anything.
+[tool.setuptools.package-data]
+sahibinden = ["taxonomy_seed.json"]

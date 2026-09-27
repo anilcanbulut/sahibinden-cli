@@ -15,10 +15,11 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from .config import config
 from .fetch.fetcher import BREAKER_PATH, fetch_pages
-from .fetch.guard import Breaker
+from .fetch.guard import Breaker, Verdict
 from .parse.detail import parse_detail
 from .parse.search import parse_search
 from .store import Store
+from .taxonomy import Taxonomy
 
 #: sahibinden paginates by row offset, not page number.
 PAGE_SIZE = 20
@@ -47,6 +48,50 @@ def plan(base_url: str, total_results: int | None, max_pages: int | None) -> lis
     return [page_url(base_url, i * PAGE_SIZE) for i in range(needed)]
 
 
+def learn_from(html: str, *, complete: tuple[str, str] | None = None) -> None:
+    """Merge whatever a fetched page teaches into the local vocabulary.
+
+    Every search page carries its category tree and its filter ids, so the
+    vocabulary keeps itself current as a side effect of searching instead of
+    needing a separate harvest. Never allowed to fail a fetch.
+    """
+    try:
+        tax = Taxonomy()
+        tax.merge(Taxonomy.extract(html))
+        if complete:
+            category, brand = complete
+            # Only a page that actually listed this brand's models may vouch
+            # for the list; an empty one would make every model "unknown".
+            if tax.categories.get(category, {}).get("models", {}).get(brand, {}).get("models"):
+                tax.mark_models_complete(category, brand)
+        tax.save()
+    except Exception as exc:  # the listings matter more than the vocabulary
+        print(f"  (could not update the filter list: {exc})")
+
+
+def learn_models(targets: list[dict], *, attach: bool = False) -> dict:
+    """Fetch brand pages so a model can be placed in its category.
+
+    One request per category the brand has listings in, once per brand: a
+    brand page's sidebar lists every model with its exact path, and the list is
+    kept. Much cheaper than the alternative of trying the Otomobil path, taking
+    the 404, and trying SUV next — every time.
+    """
+    brand = targets[0]["brand"]
+    print(f"  learning {brand}'s model list — {len(targets)} page(s), "
+          f"only needed once", flush=True)
+    results = fetch_pages([t["url"] for t in targets], expect="search",
+                          attach=attach)
+    for target, result in zip(targets, results):
+        if not result.ok:
+            return {"error": result.assessment.verdict.value,
+                    "reason": result.assessment.reason}
+        learn_from(result.html, complete=(target["category"], target["brand"]))
+    if len(results) < len(targets):
+        return {"error": "stopped", "reason": "not every brand page was fetched"}
+    return {"ok": True}
+
+
 def sweep(
     base_url: str,
     *,
@@ -68,6 +113,18 @@ def sweep(
     # goes, so we never guess at page count.
     first = fetch_pages([page_url(base_url, 0)], expect="search",
                         daily_limit=daily_limit, attach=attach)
+    if first and first[0].assessment.verdict is Verdict.EMPTY:
+        # Nothing matches. That is an answer, not a failure.
+        return {
+            "base_url": base_url,
+            "layout": layout,
+            "total_results": 0,
+            "pages_fetched": 1,
+            "pages_available": 0,
+            "listings": [],
+            "duplicates_dropped": 0,
+            "breaker": Breaker(BREAKER_PATH, daily_limit=daily_limit).status(),
+        }
     if not first or not first[0].ok:
         verdict = first[0].assessment if first else None
         return {
@@ -76,6 +133,7 @@ def sweep(
             "listings": [],
         }
 
+    learn_from(first[0].html)
     head = parse_search(first[0].html, layout)
     total = head["total_results"]
     urls = plan(base_url, total, max_pages)[1:]
@@ -103,7 +161,9 @@ def sweep(
         "pages_available": -(-total // PAGE_SIZE) if total else None,
         "listings": list(seen.values()),
         "duplicates_dropped": sum(len(p["listings"]) for p in pages) - len(seen),
-        "breaker": breaker.status(),
+        # Read fresh: fetch_pages counts on its own Breaker, so the one made
+        # above still holds the count from before this sweep.
+        "breaker": Breaker(BREAKER_PATH, daily_limit=daily_limit).status(),
     }
 
 

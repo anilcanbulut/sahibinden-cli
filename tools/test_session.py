@@ -63,8 +63,12 @@ def main() -> int:
     check("with its reason", "cloudflare" in text, True)
 
     print("\n3. the real wall page is still recognised as one")
-    walls = sorted(WALL.glob("*.html"), key=lambda p: p.stat().st_mtime, reverse=True)
-    sample = next((p for p in walls if p.stat().st_size < 150_000), None)
+    saved = sorted(WALL.glob("*.html"), key=lambda p: p.stat().st_mtime, reverse=True)
+    # data/raw/failed/ holds every unusable response, not only walls; the
+    # site's own 404 page is small too and has its own check below.
+    walls = [p for p in saved if p.stat().st_size < 150_000
+             and "Hata Sayfas" not in p.read_text(encoding="utf-8", errors="replace")]
+    sample = walls[0] if walls else None
     if sample is None:
         print("  SKIP  no saved wall page under data/raw/failed/")
     else:
@@ -72,10 +76,49 @@ def main() -> int:
         check(f"{sample.name[:34]}...", assess(200, {}, html).verdict,
               Verdict.LOGIN_WALL)
 
+    print("\n3b. a wrong address is a 404, not a ban")
+    # Before this verdict existed the error page failed the size test and
+    # tripped a 90-minute cooldown over a misspelt district.
+    missing = ("<html><head><title>sahibinden.com Hata Sayfası</title></head>"
+               "<body><h1>Aradığınız sayfaya <strong>ulaşılamadı.</strong></h1>"
+               "</body></html>")
+    check("the site's 404 page", assess(404, {}, missing).verdict, Verdict.NOT_FOUND)
+    check("does not halt the breaker", assess(404, {}, missing).should_halt, False)
+    check("the same words with HTTP 200 are not trusted",
+          assess(200, {}, missing).verdict, Verdict.CHALLENGED)
+    check("a challenge served as a 404 is still a challenge",
+          assess(404, {}, missing + "Just a moment...").verdict, Verdict.CHALLENGED)
+    # The block page shares the 404 page's title. Whatever status it comes
+    # with, its wording must win, or a ban could be read as "not found" and
+    # the run would carry on into it.
+    blocked = ("<html><head><title>sahibinden.com Hata Sayfası</title></head><body>"
+               "Olağan dışı erişim tespit ettik... Cihazınızdan ya da bağlı "
+               "olduğunuz ağdan sitemize olağan dışı (otomatik) erişim yapılmaya "
+               "çalışıldığını görüyoruz. Destek kodu GTDYXB07-0927</body></html>")
+    for code in (429, 404, 200):
+        check(f"the block page with HTTP {code} halts",
+              assess(code, {}, blocked).should_halt, True)
+    # A search that matches nothing has the form but no results table; it is
+    # an answer (zero listings), not a redesign of the site.
+    nothing = ('<form id="searchResultsSearchForm"></form>' + " " * 30_000)
+    check("zero results is empty, not changed markup",
+          assess(200, {}, nothing).verdict, Verdict.EMPTY)
+    check("a page with neither is still changed markup",
+          assess(200, {}, " " * 30_000).verdict, Verdict.CHANGED)
+    breaker = Breaker(Path(tempfile.mkdtemp()) / "breaker.json")
+    breaker.record(assess(404, {}, missing))
+    check("and it never starts a cooldown", breaker.cooling_down, False)
+    # Chosen by the 404 sentence, not the title: the block page shares it.
+    for page in [p for p in saved if "Aradığınız sayfaya" in
+                 p.read_text(encoding="utf-8", errors="replace")][:1]:
+        check(f"saved {page.name[:34]}...",
+              assess(404, {}, page.read_text(encoding="utf-8", errors="replace")).verdict,
+              Verdict.NOT_FOUND)
+
     print("\n4. login reports what happened in its exit code")
     calls = {}
 
-    def fake_sign_in(*, timeout, log):
+    def fake_sign_in(*, timeout, log, attach=False):
         calls["timeout"] = timeout
         log("pretending")
         return dict(calls["result"])
