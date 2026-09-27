@@ -299,6 +299,48 @@ def describe(requirements: dict[str, set[str]]) -> list[str]:
     return lines
 
 
+#: How each status reads in a sentence or a table heading.
+STATUS_WORDS = {"original": "original", "local_painted": "local paint",
+                "painted": "painted", "changed": "replaced", "unknown": "unreadable"}
+
+
+def panel_name(panel: str) -> str:
+    """'front_left_fender' -> 'front left fender'."""
+    return panel.replace("_", " ")
+
+
+def explain(parts: dict[str, str], requirements: dict[str, set[str]], *,
+            max_painted: int | None = None,
+            max_changed: int | None = None) -> list[str]:
+    """Why a diagram failed ``evaluate``: 'hood painted', '3 painted (at most 2)'."""
+    reasons = [f"{panel_name(panel)} {STATUS_WORDS.get(parts[panel], parts[panel])}"
+               for panel in PANELS if panel in requirements and panel in parts
+               and parts[panel] != "unknown" and parts[panel] not in requirements[panel]]
+    painted = sum(1 for s in parts.values() if s in ("painted", "local_painted"))
+    changed = sum(1 for s in parts.values() if s == "changed")
+    if max_painted is not None and painted > max_painted:
+        reasons.append(f"{painted} painted (at most {max_painted})")
+    if max_changed is not None and changed > max_changed:
+        reasons.append(f"{changed} replaced (at most {max_changed})")
+    return reasons
+
+
+def condition_rank(parts: dict[str, str] | None,
+                   heavy_damage_record: str | None = None) -> tuple:
+    """Sort key, best shape first.
+
+    A registered heavy-damage record outweighs any diagram, then replaced
+    panels outweigh painted ones, which outweigh local touch-ups. A car with no
+    diagram sorts last: nothing is known about it, which is not the same as
+    nothing being wrong with it.
+    """
+    if not parts:
+        return (1, 1, 0, 0, 0, 0)
+    count = {s: sum(1 for v in parts.values() if v == s) for s in STATUSES}
+    return (0, int(slugify(heavy_damage_record or "") == "evet"), count["changed"],
+            count["painted"], count["local_painted"], count["unknown"])
+
+
 def summarise(parts: dict[str, str] | None) -> str:
     """'11 orijinal, 2 boyalı' — one line for a results table."""
     if not parts:

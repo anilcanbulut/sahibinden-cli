@@ -16,6 +16,7 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 from .config import config
 from .fetch.fetcher import BREAKER_PATH, fetch_pages
 from .fetch.guard import Breaker, Verdict
+from .panels import describe, evaluate, explain
 from .parse.detail import parse_detail
 from .parse.search import parse_search
 from .store import Store
@@ -251,3 +252,83 @@ def fetch_details(
         }
     finally:
         store.close()
+
+
+def check_diagrams(
+    listings: list[dict],
+    requirements: dict[str, set[str]],
+    *,
+    fetch: int,
+    max_painted: int | None = None,
+    max_changed: int | None = None,
+    attach: bool = False,
+) -> dict:
+    """Judge a search's listings by their damage diagrams, reading the missing ones.
+
+    sahibinden cannot filter by panel, and the diagram is only on each
+    listing's own page, one request apiece. So diagrams already stored are
+    reused, and at most ``fetch`` new pages are opened, in the order the
+    listings came in: the same search run again opens the next cars rather
+    than the same ones.
+
+    Each row gains ``panels``, ``heavy_damage_record`` and ``panel_verdict``
+    ('pass', 'fail' or 'unchecked'), plus ``failed_on`` or ``unchecked_reason``
+    saying why. The listings must already be stored: the pages to open are
+    looked up by id.
+    """
+    ids = [row["listing_id"] for row in listings]
+    with Store(config.db_path) as store:
+        known = store.diagrams(ids)
+    stored_before = len(known)
+    unread = [i for i in ids if i not in known]
+    fetch = max(0, min(fetch, config.detail_budget))
+
+    opened, could_not_open, stopped = 0, {}, None
+    if fetch and unread:
+        try:
+            result = fetch_details(unread[:fetch], limit=fetch, attach=attach)
+        except RuntimeError as exc:
+            # The breaker refusing mid-run: the search rows are still worth
+            # showing, so this is reported rather than raised past them.
+            result = {"error": str(exc).splitlines()[0]}
+        if result.get("error"):
+            stopped = result["error"]
+        opened = len(result.get("fetched") or [])
+        for failure in result.get("failures") or []:
+            could_not_open[failure["listing_id"]] = failure["verdict"]
+            stopped = stopped or f"{failure['verdict']}: {failure['reason']}"
+        with Store(config.db_path) as store:
+            known = store.diagrams(ids)
+
+    tally = {"pass": 0, "fail": 0, "unchecked": 0}
+    for row in listings:
+        record = known.get(row["listing_id"])
+        parts = record["parts"] if record else None
+        row["panels"] = parts
+        row["heavy_damage_record"] = record["heavy_damage_record"] if record else None
+        verdict = evaluate(parts, requirements, max_painted=max_painted,
+                           max_changed=max_changed)
+        row["panel_verdict"] = verdict
+        tally[verdict] += 1
+        if verdict == "fail":
+            row["failed_on"] = explain(parts, requirements, max_painted=max_painted,
+                                       max_changed=max_changed)
+        elif verdict == "unchecked":
+            row["unchecked_reason"] = (
+                f"could not open it ({could_not_open[row['listing_id']]})"
+                if row["listing_id"] in could_not_open
+                else "not opened yet" if record is None
+                else "no damage diagram on its page" if not parts
+                else "its diagram does not show every part asked about")
+
+    return {
+        "requirements": describe(requirements),
+        "max_painted": max_painted,
+        "max_changed": max_changed,
+        "stored_before": stored_before,
+        "opened_now": opened,
+        "passed": tally["pass"],
+        "failed": tally["fail"],
+        "unchecked": tally["unchecked"],
+        "stopped": stopped,
+    }

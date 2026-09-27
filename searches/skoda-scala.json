@@ -1,0 +1,23 @@
+{
+  "brand": "Skoda",
+  "model": "Scala",
+  "min-price": 1000000,
+  "max-price": 1300000,
+  "min-year": 2020,
+  "max-km": 70000,
+  "fuel": [
+    "Benzin"
+  ],
+  "transmission": [
+    "Otomatik"
+  ],
+  "heavy-damage": [
+    "Hayır"
+  ],
+  "original": [
+    "hood",
+    "roof"
+  ],
+  "check": 15,
+  "markdown": true
+}

@@ -16,28 +16,36 @@ Design notes for agent use:
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import json
 import statistics
 import sys
 from pathlib import Path
 from urllib.parse import parse_qsl, urlparse
 
+from .ask import ask_search
 from .config import CONFIG_PATH, Config, config, set_config
-from .crawl import fetch_details, learn_models, sweep
+from .crawl import check_diagrams, fetch_details, learn_models, sweep
 from .panels import (PANEL_GROUPS, PANEL_LABELS, PANELS, STATUSES,
-                     build_requirements, describe)
+                     build_requirements, condition_rank, describe, summarise)
 from .parse.detail import parse_detail
 from .fetch.fetcher import BREAKER_PATH, RAW_DIR
 from .fetch.guard import Breaker
+from . import saved
+from .report import markdown
 from .store import Store
 from .taxonomy import (CATEGORY_NAMES, ENUM_FLAGS, FLAG_FILTERS, Taxonomy,
-                       apply_post_filters)
+                       apply_post_filters, slugify)
 
 EXIT_OK, EXIT_ERROR, EXIT_REFUSED = 0, 1, 2
 
 #: Committed pages the filter vocabulary can be rebuilt from with no
 #: network at all, so a fresh clone is not blind until its first sweep.
 SAMPLES_DIR = Path(__file__).resolve().parents[2] / "samples"
+
+#: Where `ask` keeps each search's Markdown table. Under data/, so it stays on
+#: this PC with the database rather than being committed.
+RESULTS_DIR = Path(__file__).resolve().parents[2] / "data" / "results"
 
 
 def emit(data: dict, as_json: bool, human) -> None:
@@ -77,6 +85,22 @@ def print_resolve_error(resolved: dict, as_json: bool) -> None:
 def cmd_search(args) -> int:
     """Resolve a query to a sahibinden URL, sweep it, store and summarise."""
     attach = getattr(args, "attach", False)
+
+    # Body-part rules are checked before anything is fetched, so a misspelled
+    # panel costs nothing. They run after the sweep, over each car's diagram.
+    requirements, error = build_requirements(
+        panel=args.panel, original=args.original,
+        not_changed=args.not_changed, not_painted=args.not_painted)
+    if error:
+        print_resolve_error(error, args.json)
+        return EXIT_ERROR
+    checking = bool(requirements or args.max_painted is not None
+                    or args.max_changed is not None or args.check is not None
+                    or args.best_first)
+    if checking and args.no_store:
+        print("error: body-part checks open each car's page by its stored row; "
+              "drop --no-store", file=sys.stderr)
+        return EXIT_ERROR
 
     if args.url:
         url, resolved, post = args.url, {"url": args.url, "source": "explicit"}, {}
@@ -157,6 +181,18 @@ def cmd_search(args) -> int:
             stored = store.record_sweep(result)
     result["stored"] = stored
 
+    if checking:
+        result["panel_check"] = check_diagrams(
+            matched, requirements,
+            fetch=config.detail_budget if args.check is None else args.check,
+            max_painted=args.max_painted, max_changed=args.max_changed,
+            attach=attach)
+        if args.best_first:
+            # Stable, so cars in the same shape keep the search's own order.
+            matched.sort(key=lambda x: (x["panel_verdict"] != "pass",
+                                        condition_rank(x["panels"],
+                                                       x["heavy_damage_record"])))
+
     prices = [x["price_try"] for x in matched if x["price_try"]]
     # Sellers may price in USD, EUR or GBP. Those rows are counted but kept out
     # of the lira statistics rather than converted at a rate we do not have —
@@ -174,6 +210,18 @@ def cmd_search(args) -> int:
         "max_price": max(prices) if prices else None,
         "median_price": int(statistics.median(prices)) if prices else None,
     }
+
+    # A Markdown table is a page to keep, not a screenful, so it carries every
+    # row unless --limit says otherwise; the terminal table stops at 20.
+    report = None
+    if args.markdown or args.save:
+        report = markdown(result, args, order=order, limit=args.limit)
+    if args.save:
+        path = Path(args.save)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(report, encoding="utf-8")
+        result["saved_to"] = str(path)
+    limit = args.limit or 20
 
     def human(d):
         r = d["resolved"]
@@ -229,22 +277,111 @@ def cmd_search(args) -> int:
             print(f"  stored         : {st['new']} new, "
                   f"{len(st['price_changes'])} price changes, "
                   f"{len(st['delisted'])} delisted")
+        pc = d.get("panel_check")
+        if pc:
+            for line in pc["requirements"]:
+                print(f"  {'body parts':<15}: {line}")
+            for cap in ("max_painted", "max_changed"):
+                if pc[cap] is not None:
+                    print(f"  {'body parts':<15}: at most {pc[cap]} "
+                          f"{'painted' if cap == 'max_painted' else 'replaced'}")
+            print(f"  {'diagrams':<15}: {pc['passed'] + pc['failed']} read "
+                  f"({pc['opened_now']} opened now): {pc['passed']} passed, "
+                  f"{pc['failed']} failed (not listed), {pc['unchecked']} not checked")
+            if pc["stopped"]:
+                print(f"  NOTE           : opening pages stopped early: {pc['stopped']}")
         print(f"  breaker        : {d['breaker']}\n")
-        print(f"  {'id':<12}{'year':<6}{'km':<10}{'price':>12}  location")
-        print("  " + "-" * 62)
-        for x in d["listings"][:args.limit]:
+        # Cars that failed the body-part check are counted above, not listed.
+        rows = [x for x in d["listings"] if not pc or x["panel_verdict"] != "fail"]
+        body = f"{'hasar':<7}{'panels':<24}" if pc else ""
+        print(f"  {'id':<12}{'year':<6}{'km':<10}{'price':>12}  {body}location")
+        print("  " + "-" * (93 if pc else 62))
+        for x in rows[:limit]:
             a = x.get("attributes") or {}
             # Foreign-currency rows keep their own unit rather than being shown
             # as 0 (price_try) or silently as lira.
             shown = (f"{x['price_try']:,}" if x.get("price_try") is not None
                      else (x.get("price_raw") or "-"))
+            if pc:
+                unchecked = x["panel_verdict"] == "unchecked"
+                body = (f"{x.get('heavy_damage_record') or '?':<7}"
+                        f"{'not checked' if unchecked else summarise(x['panels']):<24}")
             print(f"  {x['listing_id']:<12}{a.get('year',''):<6}{a.get('km',''):<10}"
-                  f"{shown:>12}  {x.get('city') or ''} {x.get('district') or ''}")
-        if len(d["listings"]) > args.limit:
-            print(f"  ... {len(d['listings']) - args.limit} more (use --limit)")
+                  f"{shown:>12}  {body}{x.get('city') or ''} {x.get('district') or ''}")
+        if len(rows) > limit:
+            print(f"  ... {len(rows) - limit} more (use --limit)")
+        if d.get("saved_to"):
+            print(f"\n  saved to {d['saved_to']}")
 
-    emit(result, args.json, human)
+    def as_markdown(d):
+        print()
+        print(report)
+        if d.get("saved_to"):
+            print(f"  saved to {d['saved_to']}")
+
+    emit(result, args.json, as_markdown if args.markdown else human)
     return EXIT_OK
+
+
+def cmd_ask(args) -> int:
+    """Ask for the filters one by one, then run them as a `search`."""
+    # Refused before the questions rather than after them: a cooldown or a
+    # spent budget would refuse the search they lead to anyway.
+    breaker = Breaker(BREAKER_PATH)
+    breaker.check()
+    attach = getattr(args, "attach", False)
+    try:
+        argv = ask_search(
+            Taxonomy(),
+            budget=lambda: Breaker(BREAKER_PATH).remaining,
+            default_pages=config.default_pages,
+            detail_cap=config.detail_budget,
+            seconds_per_request=((config.min_delay + config.max_delay) / 2
+                                 * breaker.delay_multiplier),
+            learn=lambda targets: learn_models(targets, attach=attach))
+    except EOFError:
+        print("\n  stopped: no search was run", file=sys.stderr)
+        return EXIT_ERROR
+    if argv is None:
+        print("  not searched")
+        return EXIT_OK
+
+    brand, model = (argv[argv.index(f) + 1] if f in argv else None
+                    for f in ("--brand", "--model"))
+    name = slugify(" ".join(x for x in (brand, model) if x)) or "search"
+    parser = build_parser()
+    kept = saved.save(argv, _subcommand(parser, "search"), name)
+    shown = (kept.relative_to(saved.PROJECT_ROOT)
+             if kept.is_relative_to(saved.PROJECT_ROOT) else kept)
+    print(f"\n  saved as {shown}. To run it again without the questions:\n"
+          f"    sahibinden-cli search --filters {kept.stem}")
+    if attach:
+        argv.append("--attach")
+    search_args = parser.parse_args(["search", *argv, "--save", str(results_path(name))])
+    search_args.json = args.json
+    return cmd_search(search_args)
+
+
+def results_path(name: str) -> Path:
+    """Where a search's Markdown table is kept: dated, so no run replaces another."""
+    return RESULTS_DIR / f"{dt.datetime.now():%Y%m%d-%H%M%S}_{name}.md"
+
+
+def expand_filters(argv: list[str], parser: argparse.ArgumentParser,
+                   filters: str) -> list[str]:
+    """`search --filters NAME` as the flags it stands for.
+
+    The saved flags go in right after `search`, ahead of anything typed, so a
+    typed single-value flag replaces the saved one (argparse keeps the last)
+    and a typed repeatable one adds to the saved list. Like a search run from
+    `ask`, the table is kept under data/results/ unless --save says elsewhere.
+    """
+    stored = saved.load(filters, _subcommand(parser, "search"))
+    at = argv.index("search") + 1
+    expanded = argv[:at] + stored + argv[at:]
+    if not any(a == "--save" or a.startswith("--save=") for a in expanded):
+        expanded += ["--save", str(results_path(Path(filters).stem))]
+    return expanded
 
 
 def detail_command(args) -> str:
@@ -1190,7 +1327,9 @@ def cmd_capabilities(args) -> int:
             "Per-panel damage filters (--original, --not-changed, --panel) "
             "read the detail-page diagram, so they only answer for listings "
             "whose details have been fetched. Cars without one are reported as "
-            "unchecked, never as passing or failing; 'panels' shows coverage.",
+            "unchecked, never as passing or failing; 'panels' shows coverage. "
+            "On 'search' they open up to --check result pages (1 request each, "
+            "capped by detail_budget) and reuse diagrams already stored.",
             "Choice filters that sahibinden draws as checkboxes are repeatable "
             "(--fuel diesel --fuel hybrid); the ones it draws as radios "
             "(--seller, --listed-within) refuse a second value. 'filters' says "
@@ -1265,6 +1404,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--district", help="ilce — e.g. Cankaya; needs --city. Slug is "
                                       "guessed, verified by results")
     p.add_argument("--url", help="explicit sahibinden search URL, bypassing the resolver")
+    p.add_argument("--filters", metavar="NAME",
+                   help="run a saved search: a JSON file, or a name in searches/ "
+                        "('ask' saves one per search). Flags typed as well change "
+                        "that run: a single-value one replaces the saved value, a "
+                        "repeatable one adds to the saved list")
     p.add_argument("--min-year", type=int, help="applied in the URL")
     p.add_argument("--max-year", type=int, help="applied in the URL")
     p.add_argument("--min-km", type=int, help="applied in the URL")
@@ -1316,6 +1460,34 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--keyword", help="Kelime ile filtrele — free text over titles")
     p.add_argument("--keyword-in-description", action="store_true",
                    help="also match --keyword inside ad descriptions")
+    # Body parts. sahibinden has no per-panel filter, so these read each
+    # result's damage diagram from its own page once the search is done.
+    p.add_argument("--original", action="append", metavar="PARTS",
+                   help="part or group that must be untouched, e.g. hood, roof, "
+                        "structural (repeatable; see 'panels'). Opens each car's "
+                        "page: see --check")
+    p.add_argument("--not-changed", action="append", metavar="PARTS",
+                   help="part or group that must not be replaced; paint is "
+                        "allowed (repeatable)")
+    p.add_argument("--not-painted", action="append", metavar="PARTS",
+                   help="part or group with no full repaint; local touch-up "
+                        "allowed (repeatable)")
+    p.add_argument("--panel", action="append", metavar="PART=STATUS",
+                   help="e.g. roof=original,local_painted (repeatable)")
+    p.add_argument("--max-painted", type=int,
+                   help="most painted panels allowed across the whole car")
+    p.add_argument("--max-changed", type=int,
+                   help="most replaced panels allowed across the whole car")
+    p.add_argument("--check", type=int, metavar="N",
+                   help="open up to N result pages to read their damage "
+                        "diagrams, 1 request each, cheapest first (default "
+                        "detail_budget, currently 15, once a body-part filter "
+                        "is given). Diagrams read before are reused, so 0 uses "
+                        "only those")
+    p.add_argument("--best-first", action="store_true",
+                   help="order the results by body condition: no heavy-damage "
+                        "record, then fewest replaced, painted and touched-up "
+                        "panels")
     p.add_argument("--sort", default="price_asc",
                    choices=["price_asc", "price_desc", "date_desc", "date_asc"])
     p.add_argument("--pages", type=int,
@@ -1323,9 +1495,27 @@ def build_parser() -> argparse.ArgumentParser:
                         "(default: config default_pages, currently 5)")
     p.add_argument("--layout", default="vehicle", choices=["vehicle", "property"],
                    help="column layout of the results table")
-    p.add_argument("--limit", type=int, default=20, help="rows to print")
+    p.add_argument("--limit", type=int,
+                   help="rows to print (default 20; every row with --markdown "
+                        "or --save)")
+    p.add_argument("--markdown", action="store_true",
+                   help="print the results as a Markdown table with a link to "
+                        "each listing")
+    p.add_argument("--save", metavar="FILE",
+                   help="also write the Markdown table to FILE")
     p.add_argument("--no-store", action="store_true", help="do not write to the database")
     p.set_defaults(func=cmd_search)
+
+    p = sub.add_parser("ask", parents=[shared],
+                       help="answer questions instead of typing filter flags",
+                       description="Ask for each search filter in turn, as the "
+                                   "website's sidebar offers them, with the "
+                                   "values each takes and an example. Enter "
+                                   "skips a filter. Answers are checked as they "
+                                   "are typed, then run as a normal search "
+                                   "whose results come back as a Markdown "
+                                   "table, also saved under data/results/.")
+    p.set_defaults(func=cmd_ask)
 
     p = sub.add_parser("login", parents=[shared],
                        help="sign in to sahibinden in a real browser window",
@@ -1547,9 +1737,20 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _subcommand(parser: argparse.ArgumentParser, name: str) -> argparse.ArgumentParser:
+    return parser._subparsers._group_actions[0].choices[name]  # noqa: SLF001
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
+    argv = sys.argv[1:] if argv is None else list(argv)
     args = parser.parse_args(argv)
+    if getattr(args, "filters", None):
+        try:
+            args = parser.parse_args(expand_filters(argv, parser, args.filters))
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return EXIT_ERROR
 
     # SUPPRESS means a flag is absent from the namespace unless the caller
     # actually passed it — in either position. getattr keeps that working

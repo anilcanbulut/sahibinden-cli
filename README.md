@@ -75,6 +75,150 @@ Output from that search, run on 27 Sep 2026:
   ...
 ```
 
+### Answering questions instead of typing flags
+
+```powershell
+sahibinden-cli ask
+```
+
+This asks for each filter in turn, in the order the website's sidebar lists
+them, and shows the values each one takes plus an example. Set only the ones
+you care about:
+
+- **Enter** skips a filter, the same as leaving a sidebar box empty. Only the
+  brand is required.
+- **`?`** lists every value a question takes (all brands, all models, all
+  colours, ...).
+- A wrong answer is asked again, with a "did you mean" or the valid values.
+- Shortcuts: `500k-1.5m` or `-1.5m` for price, `2018` for "2018 and newer",
+  `150k` for km, `diesel, hybrid` to tick two boxes, `1.6` for the engine
+  band, `150` for the horsepower band, `7` for "posted in the last 7 days".
+- Engine, horsepower, drive, warranty, plate, trade-in, video and currency
+  are behind a "More filters?" question, answered No by default.
+
+```
+  Fuel (Yakıt / Motor Tipi), one or more
+    Benzin (petrol), Benzin (Hafif Hibrit), Benzin (Hibrit) (hybrid), Benzin
+    (LPG), Benzin (Plug-in Hibrit), Dizel (diesel), Dizel (Hafif Hibrit),
+    Elektrik (electric)
+    e.g. diesel   or several: diesel, hybrid
+  > diesel, hybrid
+    = Dizel, Benzin (Hibrit)
+```
+
+After the sidebar filters it asks about [body parts](#body-parts-part-by-part),
+then how many result pages and car pages to read. At the end it shows your
+filters and the same search as a `search` command you can reuse without the
+questions, then says how many requests and minutes it will take and asks
+before spending any.
+
+The results come back as a Markdown table: listing id, title, trim, year, km,
+colour, price, location, date posted, how many parts are replaced, painted and
+locally painted, the heavy-damage record, which parts aren't original, and a
+link to each listing. A copy is saved in `data/results/`. Open it in anything
+that renders Markdown (VS Code's preview, for example) and the links are
+clickable.
+
+If you name a model of a brand the CLI hasn't searched before, it reads that
+brand's model list from sahibinden right then (1–2 requests, once per brand),
+the same as `search` would.
+
+### Saved searches
+
+Every search you run from `ask` is saved as a small JSON file in `searches/`,
+named after the car, and `ask` tells you the name. To run it again without the
+questions:
+
+```powershell
+sahibinden-cli search --filters skoda-scala
+```
+
+The file holds the `search` flags under their own names, without the dashes,
+so you can also edit it or write one by hand:
+
+```json
+{
+  "brand": "Skoda",
+  "model": "Scala",
+  "min-price": 1000000,
+  "max-price": 1300000,
+  "min-year": 2020,
+  "max-km": 70000,
+  "fuel": ["Benzin"],
+  "transmission": ["Otomatik"],
+  "heavy-damage": ["Hayır"],
+  "original": ["hood", "roof"],
+  "check": 15,
+  "markdown": true
+}
+```
+
+- Options you can give more than once (`fuel`, `color`, `original`, ...) are
+  lists. Switches (`markdown`, `best-first`, `undamaged`) are `true` or
+  `false`. Numbers are plain numbers.
+- A misspelled option or a wrong kind of value is refused with the file's name
+  and what's wrong, before anything is fetched.
+- Flags typed after `--filters` change that one run without touching the file.
+  A single-value flag replaces the saved value: `--pages 1`, `--max-price
+  1200000`. A flag you can repeat adds to the saved list: `--fuel Dizel`.
+- `--filters` takes a name from `searches/` or the path to any JSON file.
+- As with `ask`, a copy of the results table is saved in `data/results/`.
+- Saving the same filters again reuses the file. A different search for the
+  same car gets a numbered name (`skoda-scala-2`), so a file you edited is
+  never overwritten.
+- `searches/` isn't ignored by git, so you can commit it and `git pull` your
+  searches on another PC.
+
+### Body parts, part by part
+
+sahibinden can only filter "nothing painted" (`--unpainted`) or "nothing
+replaced" (`--unchanged`) on the whole car. That throws away a car with a
+repainted bumper along with one that has a replaced roof. This CLI can set
+rules for the parts you care about and leave the rest free:
+
+```powershell
+sahibinden-cli search --brand vw --model passat --max-price 1500000 `
+    --original hood --original roof --markdown
+```
+
+That keeps cars whose hood and roof are original, whatever state the other
+parts are in. The rules:
+
+| Rule | Flag | Allows |
+|---|---|---|
+| Must be original | `--original hood` | original only |
+| May be painted, not replaced | `--not-changed structural` | original, local paint, painted |
+| May have local paint only | `--not-painted doors` | original, local paint |
+| At most N painted parts on the whole car | `--max-painted 2` | counts painted and local paint |
+| At most N replaced parts on the whole car | `--max-changed 0` | |
+
+Parts are `hood`, `roof`, `trunk`, `front_bumper`, `rear_bumper`, and the
+four fenders and four doors (`front_left_fender`, `rear_right_door`, ...).
+Turkish names work too: `kaput`, `tavan`, `"sol ön çamurluk"`. Groups:
+`structural` (every part but the bumpers), `doors`, `fenders`, `bumpers`,
+`front`, `rear`, `left`, `right`, `all`. `sahibinden-cli panels` lists them.
+Repeat a flag for several parts. In `ask`, separate them with commas:
+`hood, roof`.
+
+How it works, and what it costs:
+
+- Part damage is only on each listing's own page (the damage diagram), so
+  after the search the CLI **opens the results one by one**: 1 request each,
+  12–25 seconds apart, in the search's order.
+- **At most 15 per search** (`detail_budget`). `--check 10` opens fewer. With
+  a body-part rule, the default is 15. Default page count 5 plus 15 cars is
+  20 requests, about 6 minutes. With `--pages 1`, it's 16.
+- **Diagrams are remembered.** Run the same search again and the cars already
+  read cost nothing, so the next 15 get opened. `--check 0` uses only
+  what's already known.
+- The table splits the results into cars that **passed**, cars that **did not
+  pass** (with the reason, e.g. `hood painted`), and cars **not checked yet**.
+  The last group may or may not pass. They're never counted as clean.
+- `--best-first` orders the table by condition: no heavy-damage record, then
+  fewest replaced, painted and locally painted parts. In `ask`, answer
+  `condition` to the Order question.
+- `--check 15` without any rule just adds the body-part columns to the table.
+
 **Checking it against the website:** the `url` line is the exact page the CLI
 read. Open it in your browser. The `total on site` count and the listings
 should match what you see there. The CLI can list one or two more than `total
@@ -111,6 +255,7 @@ need to know which is which:
 | Seller | `--seller` | `--seller owner` (sahibinden), `--seller dealer` (galeriden) |
 | Heavy-damage record | `--heavy-damage` | `--heavy-damage no` |
 | No painted or replaced parts | `--undamaged` | or one of them: `--unpainted`, `--unchanged` |
+| Rules for single parts | `--original` `--not-changed` `--not-painted` | `--original hood --original roof` ([more](#body-parts-part-by-part)) |
 | Posted recently | `--listed-within` | `--listed-within "son 24 saat"` |
 | Word in the title | `--keyword` | `--keyword "cam tavan"` |
 
@@ -147,7 +292,12 @@ How the values work:
 |---|---|
 | `--sort date_desc` | newest listings first. The default is `price_asc` (cheapest first); `price_desc` and `date_asc` also work. |
 | `--pages 10` | read more pages. Each page is 20 listings and costs 1 request. The default is 5 ([change it](#changing-the-limits)). |
-| `--limit 50` | print more rows. The default is 20. |
+| `--limit 50` | print more rows. The default is 20, or every row with `--markdown` or `--save`. |
+| `--markdown` | print the results as a Markdown table with a link to each listing, as `ask` does |
+| `--save results.md` | also write that Markdown table to a file |
+| `--filters skoda-scala` | run a [saved search](#saved-searches) |
+| `--check 10` | open up to 10 results to read their damage diagram ([more](#body-parts-part-by-part)) |
+| `--best-first` | order the results by body condition, best first |
 | `--url "<link>"` | skip the filter flags. Set your filters on the website, copy the address bar and paste it here. Any other filter flags are ignored. |
 | `--json` | print full data for every listing, including its title and link |
 
@@ -330,7 +480,7 @@ Run `sahibinden-cli <command> --help` to see all the options for a command.
 ## Tests
 
 ```powershell
-python tools/test_filters.py; python tools/test_session.py; python tools/test_store.py; python tools/test_panels.py
+python tools/test_filters.py; python tools/test_session.py; python tools/test_store.py; python tools/test_panels.py; python tools/test_ask.py
 ```
 
 These run offline and spend no requests.

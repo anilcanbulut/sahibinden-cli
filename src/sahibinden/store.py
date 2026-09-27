@@ -413,6 +413,30 @@ class Store:
 
     # --------------------------------------------------------------- queries
 
+    def diagrams(self, listing_ids: list[str]) -> dict[str, dict]:
+        """The stored damage record of every listing here whose page was read.
+
+        A listing read but carrying no diagram maps to ``parts: None``, while
+        one never read is absent altogether: "looked and found nothing" and
+        "never looked" call for different next steps.
+        """
+        if not listing_ids:
+            return {}
+        rows = self.db.execute(
+            "SELECT listing_id, heavy_damage_record, damage FROM listing_details"
+            f" WHERE listing_id IN ({','.join('?' * len(listing_ids))})",
+            listing_ids,
+        ).fetchall()
+        found = {}
+        for row in rows:
+            try:
+                parts = json.loads(row["damage"]) if row["damage"] else None
+            except (TypeError, ValueError):
+                parts = None
+            found[row["listing_id"]] = {"parts": parts,
+                                        "heavy_damage_record": row["heavy_damage_record"]}
+        return found
+
     def stats(self) -> dict:
         q = lambda sql: self.db.execute(sql).fetchone()[0]  # noqa: E731
         return {
