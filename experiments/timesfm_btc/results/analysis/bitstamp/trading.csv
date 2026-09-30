@@ -1,0 +1,5 @@
+strategy,trades,decisions,position_changes,hit_pct,gross_return_pct,net_return_pct,random_p05_pct,random_p50_pct,random_p95_pct,share_of_random_beaten_pct
+timesfm25,every 6 hours,3985,1246.0000,49.3843,-79.7870,-94.1828,-96.3235,-86.1051,-50.6245,14.2500
+Buy and hold,every 6 hours,3985,,,,104.6750,,,,
+timesfm25,once a day,997,342.0000,50.4514,-54.3430,-67.5514,-83.7668,-40.1742,119.3378,22.4500
+Buy and hold,once a day,997,,,,99.6889,,,,

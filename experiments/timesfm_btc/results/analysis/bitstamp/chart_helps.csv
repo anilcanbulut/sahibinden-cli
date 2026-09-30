@@ -1,0 +1,9 @@
+group,model,skill,lo,hi
+"Volume, next 24 hours",7-day average of each hour,15.65,13.60,17.49
+"Volume, next 24 hours",TimesFM 2.5,25.65,24.08,27.15
+"Volatility, next day",HAR model,13.89,9.55,17.44
+"Volatility, next day",30-day average,-1.55,-9.40,4.66
+"Volatility, next day",TimesFM 2.5,32.09,28.65,35.74
+"Volatility, next 7 days",HAR model,37.96,32.19,43.51
+"Volatility, next 7 days",30-day average,26.06,16.90,33.58
+"Volatility, next 7 days",TimesFM 2.5,38.77,33.45,44.97

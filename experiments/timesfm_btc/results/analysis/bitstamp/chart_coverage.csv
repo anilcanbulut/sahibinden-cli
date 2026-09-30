@@ -1,0 +1,31 @@
+model,bars,lead,coverage
+TimesFM 2.5,15-minute bars,15m,89.40
+TimesFM 2.5,15-minute bars,1h,83.39
+TimesFM 2.5,15-minute bars,4h,76.78
+TimesFM 2.5,15-minute bars,1d,70.57
+TimesFM 2.5,Hourly bars,1h,90.16
+TimesFM 2.5,Hourly bars,6h,77.37
+TimesFM 2.5,Hourly bars,1d,66.75
+TimesFM 2.5,Hourly bars,3d,57.26
+TimesFM 2.5,Hourly bars,7d,50.31
+TimesFM 2.5,4-hour bars,4h,89.27
+TimesFM 2.5,4-hour bars,1d,77.83
+TimesFM 2.5,4-hour bars,7d,68.20
+TimesFM 2.5,Daily bars,1d,86.14
+TimesFM 2.5,Daily bars,7d,79.26
+TimesFM 2.5,Daily bars,30d,75.46
+No change + recent volatility,15-minute bars,15m,87.35
+No change + recent volatility,15-minute bars,1h,87.88
+No change + recent volatility,15-minute bars,4h,84.14
+No change + recent volatility,15-minute bars,1d,82.24
+No change + recent volatility,Hourly bars,1h,87.68
+No change + recent volatility,Hourly bars,6h,84.32
+No change + recent volatility,Hourly bars,1d,81.91
+No change + recent volatility,Hourly bars,3d,80.40
+No change + recent volatility,Hourly bars,7d,80.55
+No change + recent volatility,4-hour bars,4h,87.36
+No change + recent volatility,4-hour bars,1d,82.85
+No change + recent volatility,4-hour bars,7d,82.15
+No change + recent volatility,Daily bars,1d,83.88
+No change + recent volatility,Daily bars,7d,83.06
+No change + recent volatility,Daily bars,30d,78.03

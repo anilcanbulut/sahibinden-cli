@@ -1,0 +1,16 @@
+model,bars,lead,hit,lo,hi
+TimesFM 2.5,15-minute bars,15m,50.89,49.39,52.36
+TimesFM 2.5,15-minute bars,1h,49.28,47.70,50.85
+TimesFM 2.5,15-minute bars,4h,49.33,47.78,50.90
+TimesFM 2.5,15-minute bars,1d,50.71,48.81,52.83
+TimesFM 2.5,Hourly bars,1h,51.06,49.57,52.56
+TimesFM 2.5,Hourly bars,6h,49.38,47.83,50.89
+TimesFM 2.5,Hourly bars,1d,50.66,48.71,52.67
+TimesFM 2.5,Hourly bars,3d,50.75,47.74,53.74
+TimesFM 2.5,Hourly bars,7d,51.74,47.30,56.51
+TimesFM 2.5,4-hour bars,4h,49.15,46.04,52.16
+TimesFM 2.5,4-hour bars,1d,48.04,44.83,50.95
+TimesFM 2.5,4-hour bars,7d,50.35,45.44,55.67
+TimesFM 2.5,Daily bars,1d,49.79,46.61,52.98
+TimesFM 2.5,Daily bars,7d,47.64,42.09,53.39
+TimesFM 2.5,Daily bars,30d,51.95,41.68,60.58

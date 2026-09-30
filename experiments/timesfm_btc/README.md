@@ -16,6 +16,10 @@ time-series model, and checks its forecasts against what actually happened.
 
 It writes a chart and two CSVs to `results/`.
 
+For the full evaluation (26,000 forecasts per model across 15-minute to daily
+bars, volume and volatility, context lengths, trading), see
+[`analysis/`](analysis/README.md); its scores are in `results/analysis/`.
+
 ## Setup
 
 ```powershell
@@ -59,7 +63,7 @@ is the close of the 02:00 to 03:00 bar.
 
 This container couldn't reach Binance or Hugging Face, so these runs used
 [Bitstamp BTC/USD 1-minute data](https://github.com/ff137/bitstamp-btcusd-minute-data)
-(updated daily; BTC/USD and BTC/USDT move within a few dollars of each other)
+(updated daily; BTC/USD and BTC/USDT usually sit within a fraction of a percent of each other)
 and the TimesFM 2.5 Flax checkpoint from Google's Vertex Model Garden bucket
 (`gs://vertex-model-garden-public-us/timesfm/timesfm-2.5-200m-flax`).
 

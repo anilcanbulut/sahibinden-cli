@@ -1,0 +1,22 @@
+model,days,lead,coverage
+TimesFM 2.5,1.00,1h,81.45
+TimesFM 2.5,1.00,6h,57.71
+TimesFM 2.5,1.00,24h,46.08
+TimesFM 2.5,3.00,1h,86.08
+TimesFM 2.5,3.00,6h,67.93
+TimesFM 2.5,3.00,24h,58.75
+TimesFM 2.5,7.00,1h,90.07
+TimesFM 2.5,7.00,6h,72.82
+TimesFM 2.5,7.00,24h,67.13
+TimesFM 2.5,14.00,1h,88.93
+TimesFM 2.5,14.00,6h,73.57
+TimesFM 2.5,14.00,24h,72.02
+TimesFM 2.5,30.00,1h,89.83
+TimesFM 2.5,30.00,6h,75.16
+TimesFM 2.5,30.00,24h,77.76
+TimesFM 2.5,90.00,1h,86.48
+TimesFM 2.5,90.00,6h,75.36
+TimesFM 2.5,90.00,24h,80.25
+TimesFM 2.5,180.00,1h,89.23
+TimesFM 2.5,180.00,6h,77.06
+TimesFM 2.5,180.00,24h,81.05
